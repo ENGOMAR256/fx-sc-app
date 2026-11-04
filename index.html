@@ -14,7 +14,6 @@
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body { background: var(--bg-dark); color: var(--text-main); min-height: 100vh; display: flex; }
         
-        /* DESKTOP SIDEBAR */
         .sidebar { width: 260px; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 50; }
         .logo { padding: 24px; font-size: 22px; font-weight: 900; color: var(--gold); letter-spacing: 1px; border-bottom: 1px solid var(--border); }
         .nav-link { padding: 16px 24px; color: var(--text-muted); text-decoration: none; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: 0.2s; border-left: 3px solid transparent; }
@@ -22,7 +21,6 @@
         .nav-link.active { background: rgba(212, 168, 67, 0.1); color: var(--gold); border-left-color: var(--gold); }
         .sidebar-footer { margin-top: auto; padding: 24px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border); line-height: 1.5; }
 
-        /* MAIN CONTENT */
         .main-content { margin-left: 260px; flex: 1; padding: 32px; width: calc(100% - 260px); }
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; flex-wrap: wrap; gap: 16px; }
         .page-title { font-size: 28px; font-weight: 800; }
@@ -55,7 +53,6 @@
         
         .status-label { font-size: 11px; font-weight: 900; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
         .status-label.live { color: var(--green); }
-        .status-label.pending { color: var(--blue); }
 
         .strategy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;}
         .strategy-name { font-size: 13px; color: var(--text-main); font-weight: 700; }
@@ -78,20 +75,17 @@
         .timer-fill { height: 100%; background: var(--gold); border-radius: 2px; transition: width 1s linear; }
         .timer-text { font-size: 11px; color: var(--text-muted); font-weight: 700; min-width: 50px; text-align: right; font-variant-numeric: tabular-nums; }
 
-        /* VIEWS */
         .view-section { display: none; animation: fadeIn 0.3s ease; }
         .view-section.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
         .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
 
-        /* MOBILE BOTTOM NAV */
         .mobile-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg-card); border-top: 1px solid var(--border); padding: 12px 0 24px; z-index: 100; justify-content: space-around; }
         .mob-link { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text-muted); font-size: 11px; font-weight: 600; cursor: pointer; text-decoration: none; }
         .mob-link.active { color: var(--gold); }
         .mob-icon { font-size: 20px; }
 
-        /* RESPONSIVE */
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .main-content { margin-left: 0; width: 100%; padding: 16px; padding-bottom: 90px; }
@@ -103,7 +97,6 @@
     </style>
 </head>
 <body>
-    <!-- DESKTOP SIDEBAR -->
     <aside class="sidebar">
         <div class="logo">FX PRO</div>
         <a class="nav-link active" onclick="switchView('dashboard', this)">📊 Dashboard</a>
@@ -113,7 +106,6 @@
         <div class="sidebar-footer">FX PRO STRATEGY<br>Educational use only. Not financial advice.</div>
     </aside>
 
-    <!-- MAIN CONTENT -->
     <main class="main-content">
         <div id="view-dashboard" class="view-section active">
             <div class="top-bar">
@@ -123,28 +115,17 @@
             <div class="filters">
                 <button class="filter-btn active" onclick="filterSignals('all', this)">ALL</button>
                 <button class="filter-btn" onclick="filterSignals('live', this)">LIVE</button>
-                <button class="filter-btn" onclick="filterSignals('pending', this)">PENDING</button>
             </div>
             <div class="signals-grid" id="signalGrid">
                 <div class="empty-state"><div class="empty-icon">⏳</div><div>Scanning markets...</div></div>
             </div>
         </div>
 
-        <div id="view-signals" class="view-section">
-            <div class="top-bar"><div class="page-title">All Signals</div></div>
-            <div class="empty-state"><div class="empty-icon">🎯</div><div>Signal history and detailed analytics coming soon.</div></div>
-        </div>
-        <div id="view-journal" class="view-section">
-            <div class="top-bar"><div class="page-title">Trade Journal</div></div>
-            <div class="empty-state"><div class="empty-icon">📓</div><div>Log your trades here to track your performance.</div></div>
-        </div>
-        <div id="view-settings" class="view-section">
-            <div class="top-bar"><div class="page-title">Settings</div></div>
-            <div class="empty-state"><div class="empty-icon">⚙️</div><div>Manage your account and notification preferences.</div></div>
-        </div>
+        <div id="view-signals" class="view-section"><div class="top-bar"><div class="page-title">All Signals</div></div><div class="empty-state"><div class="empty-icon">🎯</div><div>Signal history coming soon.</div></div></div>
+        <div id="view-journal" class="view-section"><div class="top-bar"><div class="page-title">Trade Journal</div></div><div class="empty-state"><div class="empty-icon">📓</div><div>Log your trades here.</div></div></div>
+        <div id="view-settings" class="view-section"><div class="top-bar"><div class="page-title">Settings</div></div><div class="empty-state"><div class="empty-icon">⚙️</div><div>Manage preferences.</div></div></div>
     </main>
 
-    <!-- MOBILE NAV -->
     <nav class="mobile-nav">
         <a class="mob-link active" onclick="switchView('dashboard', this)"><span class="mob-icon">📊</span>Dashboard</a>
         <a class="mob-link" onclick="switchView('signals', this)"><span class="mob-icon">🎯</span>Signals</a>
@@ -153,22 +134,15 @@
     </nav>
 
     <script>
-        // 1. WORKING BUTTONS: View Switching
         function switchView(viewName, element) {
             document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
             document.getElementById('view-' + viewName).classList.add('active');
-            
-            document.querySelectorAll('.nav-link').forEach(link => {
-                link.classList.remove('active');
-                if(link.getAttribute('onclick').includes(viewName)) link.classList.add('active');
-            });
-            document.querySelectorAll('.mob-link').forEach(link => {
+            document.querySelectorAll('.nav-link, .mob-link').forEach(link => {
                 link.classList.remove('active');
                 if(link.getAttribute('onclick').includes(viewName)) link.classList.add('active');
             });
         }
 
-        // 2. WORKING BUTTONS: Filtering
         let currentFilter = 'all';
         function filterSignals(filter, btn) {
             currentFilter = filter;
@@ -177,24 +151,22 @@
             renderSignals(window.lastSignals || []);
         }
 
-        // 3. FETCH DATA
         async function fetchSignals() {
             try {
-                // ⚠️ YOU MUST REPLACE THIS WITH YOUR ACTUAL RENDER URL ⚠️
-                const res = await fetch('https://fx-sc-app.onrender.com/signals');
+                // ⚠️ REPLACE WITH YOUR ACTUAL RENDER URL ⚠️
+                const res = await fetch('https://YOUR-RENDER-URL.onrender.com/signals');
                 const signals = await res.json();
                 window.lastSignals = signals;
                 renderSignals(signals);
             } catch (e) {
-                document.getElementById('signalGrid').innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>Backend Disconnected. Check Render URL.</div></div>`;
+                document.getElementById('signalGrid').innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>Backend Disconnected.</div></div>`;
             }
         }
 
-        // 4. RENDER & PENDING TO LIVE LOGIC
         function renderSignals(signals) {
             const grid = document.getElementById('signalGrid');
             if (!signals || signals.length === 0) {
-                grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📡</div><div>No active setups. AI is scanning all timeframes...</div></div>`;
+                grid.innerHTML = `<div class="empty-state"><div class="empty-icon">📡</div><div>No active setups. AI is scanning...</div></div>`;
                 return;
             }
 
@@ -203,11 +175,8 @@
 
             signals.forEach(s => {
                 let filteredSetups = s.setups;
-                
                 if (currentFilter === 'live') {
-                    filteredSetups = s.setups.filter(setup => setup.status === 'LIVE' || (setup.direction === 'BUY' && setup.current_price >= setup.entry) || (setup.direction === 'SELL' && setup.current_price <= setup.entry));
-                } else if (currentFilter === 'pending') {
-                    filteredSetups = s.setups.filter(setup => setup.status === 'PENDING' || (setup.direction === 'BUY' && setup.current_price < setup.entry) || (setup.direction === 'SELL' && setup.current_price > setup.entry));
+                    filteredSetups = s.setups.filter(setup => setup.status === 'LIVE');
                 }
                 
                 if (filteredSetups.length === 0) return;
@@ -221,17 +190,7 @@
                 filteredSetups.forEach(setup => {
                     const isBuy = setup.direction === 'BUY';
                     const uniqueId = `s-${globalIdx}`;
-                    
-                    // PENDING TO LIVE LOGIC
-                    let isLive = setup.status === 'LIVE';
-                    if ((isBuy && setup.current_price >= setup.entry) || (!isBuy && setup.current_price <= setup.entry)) {
-                        isLive = true;
-                    }
-
-                    const statusClass = isLive ? 'live' : 'pending';
-                    const statusText = isLive ? 'LIVE' : 'PENDING';
-                    const blockClass = isLive ? 'setup-block is-live-setup' : 'setup-block';
-                    
+                    const blockClass = 'setup-block is-live-setup';
                     const signalTime = setup.signal_time || 'Just now';
                     const confidence = setup.confidence || 0;
                     const factors = setup.confluence_factors ? setup.confluence_factors.join(' • ') : 'Analyzing...';
@@ -242,12 +201,11 @@
                                 <span class="tf-badge">${setup.timeframe}</span>
                                 <span class="dir-badge ${isBuy ? 'buy' : 'sell'}">${setup.direction}</span>
                             </div>
-                            <span class="status-label ${statusClass}">
+                            <span class="status-label live">
                                 <span style="width:6px; height:6px; border-radius:50%; background:currentColor;"></span>
-                                ${statusText}
+                                LIVE
                             </span>
                         </div>
-                        
                         <div class="strategy-header">
                             <div class="strategy-name">${setup.strategy_name}</div>
                             <div class="badges-wrap">
@@ -255,10 +213,8 @@
                                 <div class="badge conf-badge">✓ ${confidence}%</div>
                             </div>
                         </div>
-                        
                         <div class="confluence-list">${factors}</div>
                         <div class="strategy-text">${setup.strategy_logic}</div>
-                        
                         <div class="price-row">
                             <div class="price-box"><div class="price-label">ENTRY</div><div class="price-val entry">${setup.entry}</div></div>
                             <div class="price-box"><div class="price-label">STOP</div><div class="price-val sl">${setup.stopLoss}</div></div>
@@ -273,34 +229,26 @@
                 });
                 html += `</div>`;
             });
-            
             grid.innerHTML = html || `<div class="empty-state"><div class="empty-icon">🔍</div><div>No setups match this filter.</div></div>`;
             startTimers(globalIdx);
         }
 
-        // 5. TIMER LOGIC
         function startTimers(total) {
             for (let i = 0; i < total; i++) {
                 const id = `s-${i}`;
-                const exp = new Date(); 
-                exp.setMinutes(exp.getMinutes() + 30); 
-                
+                const exp = new Date(); exp.setMinutes(exp.getMinutes() + 30); 
                 const interval = setInterval(() => {
                     const diff = exp - new Date();
                     if (diff <= 0) { 
                         clearInterval(interval); 
-                        const timeEl = document.getElementById(`time-${id}`);
-                        const fillEl = document.getElementById(`fill-${id}`);
-                        if(timeEl) timeEl.innerText = "EXPIRED";
-                        if(fillEl) fillEl.style.width = "0%";
+                        if(document.getElementById(`time-${id}`)) document.getElementById(`time-${id}`).innerText = "EXPIRED";
+                        if(document.getElementById(`fill-${id}`)) document.getElementById(`fill-${id}`).style.width = "0%";
                         return; 
                     }
                     const m = Math.floor(diff / 60000);
                     const s = Math.floor((diff % 60000) / 1000);
-                    const timeEl = document.getElementById(`time-${id}`);
-                    const fillEl = document.getElementById(`fill-${id}`);
-                    if(timeEl) timeEl.innerText = `${m}:${s.toString().padStart(2, '0')}`;
-                    if(fillEl) fillEl.style.width = `${(diff / 1800000) * 100}%`;
+                    if(document.getElementById(`time-${id}`)) document.getElementById(`time-${id}`).innerText = `${m}:${s.toString().padStart(2, '0')}`;
+                    if(document.getElementById(`fill-${id}`)) document.getElementById(`fill-${id}`).style.width = `${(diff / 1800000) * 100}%`;
                 }, 1000);
             }
         }
