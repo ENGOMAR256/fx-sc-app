@@ -69,7 +69,7 @@ def scan_single_pair(pair, symbol):
         setups = []
         current_time = datetime.utcnow().strftime("%H:%M UTC")
         
-        # 1. H4 MARKET STRUCTURE & FAKEOUTS
+        # 1. H4 MARKET STRUCTURE
         h4_df = yf.Ticker(symbol).history(period="3mo", interval="4h")
         if h4_df.empty or len(h4_df) < 50: return None
         
@@ -90,10 +90,10 @@ def scan_single_pair(pair, symbol):
 
         # 2. SCAN TIMEFRAMES
         timeframes_config = [
-            {"tf": "15m", "period": "5d",  "type": "Scalping",    "sl_mult": 1.0, "tp_mult": 3.0},
-            {"tf": "30m", "period": "10d", "type": "Day Trading", "sl_mult": 1.2, "tp_mult": 3.6},
-            {"tf": "1h",  "period": "1mo", "type": "Intraday",    "sl_mult": 1.5, "tp_mult": 4.5},
-            {"tf": "4h",  "period": "3mo", "type": "Swing",       "sl_mult": 2.0, "tp_mult": 6.0}
+            {"tf": "15m", "period": "5d",  "type": "Scalping",    "rr": 3.0},
+            {"tf": "30m", "period": "10d", "type": "Day Trading", "rr": 3.0},
+            {"tf": "1h",  "period": "1mo", "type": "Intraday",    "rr": 3.0},
+            {"tf": "4h",  "period": "3mo", "type": "Swing",       "rr": 3.0}
         ]
 
         for config in timeframes_config:
@@ -111,14 +111,14 @@ def scan_single_pair(pair, symbol):
             
             classic_patterns = detect_classic_patterns(df)
             
-            # Candle Indexing: c0 is live, c1 is last closed, c2 is prev, etc.
             c5, c4, c3, c2, c1, c0 = df.iloc[-6], df.iloc[-5], df.iloc[-4], df.iloc[-3], df.iloc[-2], df.iloc[-1]
             current_price = c0['Close']
             atr = c1['ATR']
             decimals = 5 if current_price < 10 else 2
             
-            sl_dist = atr * config["sl_mult"]
-            tp_dist = atr * config["tp_mult"]
+            # SPREAD/SLIPPAGE BUFFER (Crucial for Real Entries)
+            # We use 10% of the ATR as a buffer so the Stop Loss isn't hit by normal market noise/spread
+            buffer = atr * 0.1 
             
             score = 0
             factors = []
@@ -127,75 +127,68 @@ def scan_single_pair(pair, symbol):
             if h4_fakeout_bear: score += 10; factors.append("H4 Bear Fakeout")
             if classic_patterns: score += 15; factors.append(f"Pattern: {', '.join(classic_patterns)}")
 
-            pattern_found, zone_high, zone_low, entry_price, zone_type = None, 0, 0, 0, ""
+            pattern_found, zone_high, zone_low, zone_type = None, 0, 0, ""
 
-            # --- SETUP 1: CORE SND PATTERNS (RBR, DBD, RBD, DBR) ---
-            # Strict 3-candle Marubozu-Base-Marubozu logic
+            # --- SETUP 1: CORE SND (RBR, DBD, RBD, DBR) ---
             if not pattern_found:
                 if master_trend == "BULLISH":
-                    # DBR (Drop-Base-Rally) -> Reversal/Demand
                     if c3['Is_Bearish'] and c3['Is_Marubozu'] and c2['Is_Base'] and c1['Is_Bullish'] and c1['Is_Marubozu']:
                         pattern_found, zone_high, zone_low = "DBR (Demand Zone)", c2['High'], c2['Low']
-                        entry_price, zone_type = zone_high, "Lower Zone (Demand)"
+                        zone_type = "Lower Zone (Demand)"
                         score += 30; factors.append("Core DBR Pattern")
-                    # RBR (Rally-Base-Rally) -> Continuation/Mid Zone
                     elif c3['Is_Bullish'] and c3['Is_Marubozu'] and c2['Is_Base'] and c1['Is_Bullish'] and c1['Is_Marubozu']:
                         pattern_found, zone_high, zone_low = "RBR (Continuation)", c2['High'], c2['Low']
-                        entry_price, zone_type = zone_high, "Mid Zone (Continuation)"
+                        zone_type = "Mid Zone (Continuation)"
                         score += 25; factors.append("Core RBR Pattern")
-                        
                 elif master_trend == "BEARISH":
-                    # RBD (Rally-Base-Drop) -> Reversal/Supply
                     if c3['Is_Bullish'] and c3['Is_Marubozu'] and c2['Is_Base'] and c1['Is_Bearish'] and c1['Is_Marubozu']:
                         pattern_found, zone_high, zone_low = "RBD (Supply Zone)", c2['High'], c2['Low']
-                        entry_price, zone_type = zone_low, "Top Zone (Supply)"
+                        zone_type = "Top Zone (Supply)"
                         score += 30; factors.append("Core RBD Pattern")
-                    # DBD (Drop-Base-Drop) -> Continuation/Mid Zone
                     elif c3['Is_Bearish'] and c3['Is_Marubozu'] and c2['Is_Base'] and c1['Is_Bearish'] and c1['Is_Marubozu']:
                         pattern_found, zone_high, zone_low = "DBD (Continuation)", c2['High'], c2['Low']
-                        entry_price, zone_type = zone_low, "Mid Zone (Continuation)"
+                        zone_type = "Mid Zone (Continuation)"
                         score += 25; factors.append("Core DBD Pattern")
 
             # --- SETUP 2: ENGULFING WITH MOMENTUM ---
-            # "Look for engulfing that is followed by next marubozu"
             if not pattern_found:
                 if master_trend == "BULLISH" and c2['Is_Bearish'] and c1['Is_Bullish'] and c1['Close'] > c2['Open'] and c1['Open'] < c2['Close']:
                     if c0['Is_Bullish'] and c0['Is_Marubozu']:
-                        pattern_found, zone_high, zone_low = "Bullish Engulfing + Momentum", c2['Low'], c1['Low']
-                        entry_price, zone_type = c1['Close'], "Lower Zone"
+                        pattern_found, zone_high, zone_low = "Bullish Engulfing + Momentum", c1['High'], c1['Low']
+                        zone_type = "Lower Zone"
                         score += 20; factors.append("Engulfing + Next Marubozu")
                 elif master_trend == "BEARISH" and c2['Is_Bullish'] and c1['Is_Bearish'] and c1['Close'] < c2['Open'] and c1['Open'] > c2['Close']:
                     if c0['Is_Bearish'] and c0['Is_Marubozu']:
-                        pattern_found, zone_high, zone_low = "Bearish Engulfing + Momentum", c1['High'], c2['High']
-                        entry_price, zone_type = c1['Close'], "Top Zone"
+                        pattern_found, zone_high, zone_low = "Bearish Engulfing + Momentum", c1['High'], c1['Low']
+                        zone_type = "Top Zone"
                         score += 20; factors.append("Engulfing + Next Marubozu")
 
-            # --- SETUP 3: QM (QUASIMODO) + MPL + FTR ---
+            # --- SETUP 3: QM (QUASIMODO) + MPL ---
             if not pattern_found:
                 if master_trend == "BULLISH":
                     if c4['Is_Bullish'] and c3['Is_Bearish'] and c2['Is_Bearish'] and c2['Low'] < c4['Low']:
                         if c1['Is_Bullish'] and c1['Is_Marubozu'] and c1['Close'] > c4['High']:
                             pattern_found, zone_high, zone_low = "QM Buy (MPL)", c2['High'], c2['Low']
-                            entry_price, zone_type = zone_high, "Lower Zone (Demand)"
+                            zone_type = "Lower Zone (Demand)"
                             score += 30; factors.append("QM + MPL Breakout")
                 elif master_trend == "BEARISH":
                     if c4['Is_Bearish'] and c3['Is_Bullish'] and c2['Is_Bullish'] and c2['High'] > c4['High']:
                         if c1['Is_Bearish'] and c1['Is_Marubozu'] and c1['Close'] < c4['Low']:
                             pattern_found, zone_high, zone_low = "QM Sell (MPL)", c2['High'], c2['Low']
-                            entry_price, zone_type = zone_low, "Top Zone (Supply)"
+                            zone_type = "Top Zone (Supply)"
                             score += 30; factors.append("QM + MPL Breakout")
 
-            # --- SETUP 4: FAKEOUTS (Strict Marubozu Rule) ---
+            # --- SETUP 4: FAKEOUTS ---
             if not pattern_found:
                 if master_trend == "BULLISH" and c2['Low'] < c4['Low'] and c1['Is_Bullish'] and c1['Is_Marubozu']:
                     if c1['Close'] > c4['High']:
                         pattern_found, zone_high, zone_low = "QM Support Fakeout", c2['High'], c2['Low']
-                        entry_price, zone_type = zone_high, "Lower Zone"
+                        zone_type = "Lower Zone"
                         score += 25; factors.append("Fakeout + Marubozu Break")
                 elif master_trend == "BEARISH" and c2['High'] > c4['High'] and c1['Is_Bearish'] and c1['Is_Marubozu']:
                     if c1['Close'] < c4['Low']:
                         pattern_found, zone_high, zone_low = "PML Engulfing Fakeout", c2['High'], c2['Low']
-                        entry_price, zone_type = zone_low, "Top Zone"
+                        zone_type = "Top Zone"
                         score += 25; factors.append("Fakeout + Marubozu Break")
 
             # --- SETUP 5: SNR FLIP ---
@@ -204,46 +197,66 @@ def scan_single_pair(pair, symbol):
                 swing_low = min(c4['Low'], c3['Low'], c2['Low'])
                 if master_trend == "BULLISH" and c1['Close'] > swing_high and c0['Low'] <= swing_high * 1.001 and c0['Close'] > c0['Open']:
                     pattern_found, zone_high, zone_low = "SNR Flip", swing_high * 1.002, swing_high * 0.998
-                    entry_price, zone_type = zone_high, "Lower Zone"
+                    zone_type = "Lower Zone"
                     score += 15; factors.append("SNR Flip")
                 elif master_trend == "BEARISH" and c1['Close'] < swing_low and c0['High'] >= swing_low * 0.999 and c0['Close'] < c0['Open']:
                     pattern_found, zone_high, zone_low = "SNR Flip", swing_low * 1.002, swing_low * 0.998
-                    entry_price, zone_type = zone_low, "Top Zone"
+                    zone_type = "Top Zone"
                     score += 15; factors.append("SNR Flip")
 
-            # --- EXECUTE & RISK LEVEL ---
+            # --- EXECUTE: REAL STRUCTURAL ENTRIES & STOP LOSS ---
             if pattern_found:
                 is_buy = "BULLISH" in master_trend or "Buy" in pattern_found or "RBR" in pattern_found or "DBR" in pattern_found
                 
+                # 1. Calculate REAL Risk (Distal to Proximal)
+                if is_buy:
+                    proximal = zone_high  # Entry at the top of the demand zone
+                    distal = zone_low     # Invalidation at the bottom
+                else:
+                    proximal = zone_low   # Entry at the bottom of the supply zone
+                    distal = zone_high    # Invalidation at the top
+
+                # 2. Calculate REAL Stop Loss (Distal line + Spread Buffer)
+                if is_buy:
+                    real_sl = distal - buffer
+                    real_rr_distance = proximal - real_sl
+                    real_tp = proximal + (real_rr_distance * config["rr"])
+                else:
+                    real_sl = distal + buffer
+                    real_rr_distance = real_sl - proximal
+                    real_tp = proximal - (real_rr_distance * config["rr"])
+
+                # 3. Risk Level (Freshness)
                 recent_closes = df['Close'].tail(20).values[:-1]
-                if is_buy: touches = sum(1 for p in recent_closes if p <= zone_high * 1.002 and p >= zone_low * 0.998)
-                else: touches = sum(1 for p in recent_closes if p >= zone_low * 0.998 and p <= zone_high * 1.002)
+                if is_buy: touches = sum(1 for p in recent_closes if p <= proximal * 1.002 and p >= distal * 0.998)
+                else: touches = sum(1 for p in recent_closes if p >= proximal * 0.998 and p <= distal * 1.002)
                 
                 risk_level = "Low Risk (High Prob)" if touches == 0 else ("Medium Risk" if touches <= 2 else "High Risk")
                 if risk_level == "Low Risk (High Prob)": score += 10
 
+                # 4. Pending vs Live Logic
                 if is_buy:
-                    if current_price <= zone_high * 1.002 and current_price >= zone_low * 0.998:
+                    if current_price <= proximal * 1.002 and current_price >= distal * 0.998:
                         status = "LIVE"; score += 40; factors.append("Reacting at Demand")
-                    elif current_price > zone_high:
+                    elif current_price > proximal:
                         status = "PENDING"; score += 20; factors.append("Approaching Demand")
                     else: continue
-                    setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(entry_price, decimals),
-                        stopLoss=round(zone_low - (atr * 0.5), decimals), takeProfit=round(entry_price + tp_dist, decimals),
+                    setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(proximal, decimals),
+                        stopLoss=round(real_sl, decimals), takeProfit=round(real_tp, decimals),
                         current_price=round(current_price, decimals), status=status, signal_time=current_time,
                         confidence=score, risk_level=risk_level, confluence_factors=factors,
-                        strategy_name=f"SND: {pattern_found}", strategy_logic=f"Score: {score}/100. {master_trend} H4.", zone_type=zone_type))
+                        strategy_name=f"SND: {pattern_found}", strategy_logic=f"Score: {score}/100. {master_trend} H4. Structural Entry.", zone_type=zone_type))
                 else:
-                    if current_price >= zone_low * 0.998 and current_price <= zone_high * 1.002:
+                    if current_price >= proximal * 0.998 and current_price <= distal * 1.002:
                         status = "LIVE"; score += 40; factors.append("Reacting at Supply")
-                    elif current_price < zone_low:
+                    elif current_price < proximal:
                         status = "PENDING"; score += 20; factors.append("Approaching Supply")
                     else: continue
-                    setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(entry_price, decimals),
-                        stopLoss=round(zone_high + (atr * 0.5), decimals), takeProfit=round(entry_price - tp_dist, decimals),
+                    setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(proximal, decimals),
+                        stopLoss=round(real_sl, decimals), takeProfit=round(real_tp, decimals),
                         current_price=round(current_price, decimals), status=status, signal_time=current_time,
                         confidence=score, risk_level=risk_level, confluence_factors=factors,
-                        strategy_name=f"SND: {pattern_found}", strategy_logic=f"Score: {score}/100. {master_trend} H4.", zone_type=zone_type))
+                        strategy_name=f"SND: {pattern_found}", strategy_logic=f"Score: {score}/100. {master_trend} H4. Structural Entry.", zone_type=zone_type))
 
         if setups: return Signal(pair=pair, setups=setups)
         return None
