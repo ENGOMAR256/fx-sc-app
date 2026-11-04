@@ -6,6 +6,7 @@ import yfinance as yf
 import pandas as pd
 import time
 from datetime import datetime
+from concurrent.futures import ThreadPoolExecutor
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -27,7 +28,7 @@ class Setup(BaseModel):
     current_price: float
     status: str
     signal_time: str
-    confidence: int  # 0-100%
+    confidence: int
     confluence_factors: List[str]
     strategy_name: str
     strategy_logic: str
@@ -50,75 +51,13 @@ def get_rsi(df, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def detect_chart_pattern(df, window=10):
-    """Detect simple chart patterns"""
-    if len(df) < window: return None
-    
-    recent = df.tail(window)
-    highs = recent['High'].values
-    lows = recent['Low'].values
-    
-    # Double Bottom (Bullish)
-    if len(lows) >= 4:
-        trough1 = lows[-4]
-        trough2 = lows[-2]
-        if abs(trough1 - trough2) / trough1 < 0.001:  # Within 0.1%
-            return "Double Bottom"
-    
-    # Double Top (Bearish)
-    if len(highs) >= 4:
-        peak1 = highs[-4]
-        peak2 = highs[-2]
-        if abs(peak1 - peak2) / peak1 < 0.001:
-            return "Double Top"
-    
-    return None
-
-def detect_candlestick_pattern(df):
-    """Detect candlestick patterns on last candle"""
-    if len(df) < 2: return None
-    
-    last = df.iloc[-2]
-    prev = df.iloc[-3]
-    
-    body = abs(last['Close'] - last['Open'])
-    range_val = last['High'] - last['Low']
-    
-    if range_val == 0: return None
-    
-    upper_wick = last['High'] - max(last['Open'], last['Close'])
-    lower_wick = min(last['Open'], last['Close']) - last['Low']
-    
-    # Bullish Pin Bar (long lower wick, small body at top)
-    if lower_wick > body * 2 and last['Close'] > last['Open']:
-        return "Bullish Pin Bar"
-    
-    # Bearish Pin Bar (long upper wick, small body at bottom)
-    if upper_wick > body * 2 and last['Close'] < last['Open']:
-        return "Bearish Pin Bar"
-    
-    # Bullish Engulfing
-    if (last['Close'] > last['Open'] and 
-        prev['Close'] < prev['Open'] and
-        last['Close'] > prev['Open'] and 
-        last['Open'] < prev['Close']):
-        return "Bullish Engulfing"
-    
-    # Bearish Engulfing
-    if (last['Close'] < last['Open'] and 
-        prev['Close'] > prev['Open'] and
-        last['Close'] < prev['Open'] and 
-        last['Open'] > prev['Close']):
-        return "Bearish Engulfing"
-    
-    return None
-
-def analyze_pair(pair, symbol):
+def scan_single_pair(pair_symbol_tuple):
+    pair, symbol = pair_symbol_tuple
     try:
         setups = []
         current_time = datetime.utcnow().strftime("%H:%M UTC")
         
-        # FACTOR 1: H4 TREND
+        # 1. FAST TREND CHECK (H4)
         h4_df = yf.Ticker(symbol).history(period="3mo", interval="4h")
         if h4_df.empty or len(h4_df) < 50: return None
         
@@ -126,145 +65,101 @@ def analyze_pair(pair, symbol):
         h4_df['EMA_200'] = h4_df['Close'].ewm(span=200, adjust=False).mean()
         last_h4 = h4_df.iloc[-2]
         
-        if last_h4['EMA_50'] > last_h4['EMA_200']:
-            master_trend = "UP"
-        elif last_h4['EMA_50'] < last_h4['EMA_200']:
-            master_trend = "DOWN"
-        else:
-            return None  # No clear trend
+        if last_h4['EMA_50'] > last_h4['EMA_200'] * 1.001: master_trend = "UP"
+        elif last_h4['EMA_50'] < last_h4['EMA_200'] * 0.999: master_trend = "DOWN"
+        else: return None
 
-        # FACTOR 2: H1 MARKET STRUCTURE
+        # 2. SMART ENTRY SCAN (H1)
         h1_df = yf.Ticker(symbol).history(period="1mo", interval="1h")
         if h1_df.empty or len(h1_df) < 30: return None
         
-        # Check for higher highs/lows (uptrend) or lower highs/lows (downtrend)
-        h1_highs = h1_df['High'].tail(10).values
-        h1_lows = h1_df['Low'].tail(10).values
+        h1_df['ATR'] = get_atr(h1_df)
+        h1_df['EMA_20'] = h1_df['Close'].ewm(span=20, adjust=False).mean()
+        h1_df['RSI'] = get_rsi(h1_df)
+        h1_df['Vol_SMA'] = h1_df['Volume'].rolling(20).mean()
         
-        if master_trend == "UP":
-            structure_confirmed = h1_highs[-1] > h1_highs[-5] and h1_lows[-1] > h1_lows[-5]
-        else:
-            structure_confirmed = h1_highs[-1] < h1_highs[-5] and h1_lows[-1] < h1_lows[-5]
+        last = h1_df.iloc[-2]
+        live = h1_df.iloc[-1]
         
-        if not structure_confirmed:
-            return None  # Structure doesn't confirm trend
+        current_price = live['Close']
+        atr = last['ATR']
+        rsi = last['RSI']
+        volume_ratio = last['Volume'] / last['Vol_SMA'] if last['Vol_SMA'] > 0 else 1
+        decimals = 5 if current_price < 10 else 2
+        
+        sl_dist = atr * 1.5
+        tp_dist = atr * 4.5
+        
+        score = 0
+        factors = []
+        entry_zone = last['EMA_20']
+        
+        # Factor 1: H4 Trend (20 pts)
+        score += 20
+        factors.append(f"H4 Trend: {master_trend}")
+        
+        # Factor 2: RSI Alignment (20 pts)
+        rsi_ok = False
+        if master_trend == "UP" and 40 < rsi < 80: 
+            rsi_ok = True; score += 20; factors.append(f"RSI Bullish ({round(rsi,1)})")
+        elif master_trend == "DOWN" and 20 < rsi < 60: 
+            rsi_ok = True; score += 20; factors.append(f"RSI Bearish ({round(rsi,1)})")
+            
+        # Factor 3: Volume (15 pts)
+        if volume_ratio > 1.0: 
+            score += 15; factors.append("Volume Normal/High")
+            
+        # Factor 4: Candle Shape (15 pts)
+        candle_range = last['High'] - last['Low']
+        if candle_range > 0:
+            body = abs(last['Close'] - last['Open'])
+            if body > candle_range * 0.5: 
+                score += 15; factors.append("Strong Candle Body")
 
-        # SCAN TIMEFRAMES FOR ENTRY
-        timeframes_config = [
-            {"tf": "15m", "period": "5d",  "type": "Scalping",    "sl_mult": 1.0,  "tp_mult": 3.0},
-            {"tf": "30m", "period": "10d", "type": "Day Trading", "sl_mult": 1.2,  "tp_mult": 3.6},
-            {"tf": "1h",  "period": "1mo", "type": "Intraday",    "sl_mult": 1.5,  "tp_mult": 4.5},
-            {"tf": "4h",  "period": "3mo", "type": "Swing",       "sl_mult": 2.0,  "tp_mult": 6.0}
-        ]
+        # Factor 5: ENTRY TYPE (30 pts) - THIS IS THE KEY TO MORE PAIRS!
+        is_valid_entry = False
+        setup_type = ""
+        
+        # Type A: Pullback (Price near EMA)
+        if master_trend == "UP" and last['Low'] <= entry_zone * 1.005 and last['Close'] > entry_zone:
+            is_valid_entry = True; score += 30; setup_type = "Pullback Bounce"
+        elif master_trend == "DOWN" and last['High'] >= entry_zone * 0.995 and last['Close'] < entry_zone:
+            is_valid_entry = True; score += 30; setup_type = "Pullback Rejection"
+            
+        # Type B: Momentum (Price trending away from EMA with strength)
+        elif master_trend == "UP" and last['Close'] > entry_zone and last['Close'] > last['Open'] and rsi > 50:
+            is_valid_entry = True; score += 30; setup_type = "Momentum Continuation"
+        elif master_trend == "DOWN" and last['Close'] < entry_zone and last['Close'] < last['Open'] and rsi < 50:
+            is_valid_entry = True; score += 30; setup_type = "Momentum Breakdown"
 
-        for config in timeframes_config:
-            tf = config["tf"]
-            df = yf.Ticker(symbol).history(period=config["period"], interval=tf)
-            if df.empty or len(df) < 30: continue
-            
-            df['ATR'] = get_atr(df)
-            df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-            df['RSI'] = get_rsi(df)
-            df['Vol_SMA'] = df['Volume'].rolling(20).mean()
-            
-            last = df.iloc[-2]
-            live = df.iloc[-1]
-            
-            current_price = live['Close']
-            atr = last['ATR']
-            rsi = last['RSI']
-            volume_ratio = last['Volume'] / last['Vol_SMA'] if last['Vol_SMA'] > 0 else 1
-            decimals = 5 if current_price < 10 else 2
-            
-            sl_dist = atr * config["sl_mult"]
-            tp_dist = atr * config["tp_mult"]
-            
-            # FACTOR 3: CHART PATTERN
-            chart_pattern = detect_chart_pattern(df)
-            
-            # FACTOR 4: CANDLESTICK PATTERN
-            candle_pattern = detect_candlestick_pattern(df)
-            
-            # FACTOR 5: VOLUME CONFIRMATION
-            volume_confirmed = volume_ratio > 1.2  # 20% above average
-            
-            # FACTOR 6: RSI ALIGNMENT
+        # ONLY SHOW IF SCORE IS 65+ (Smart but inclusive)
+        if score >= 65 and is_valid_entry and rsi_ok:
             if master_trend == "UP":
-                rsi_confirmed = 30 < rsi < 70  # Not overbought
-            else:
-                rsi_confirmed = 30 < rsi < 70  # Not oversold
-            
-            # FACTOR 7: ATR VOLATILITY (enough movement)
-            atr_confirmed = atr > 0  # Always true if we have data
-            
-            # Count confluence factors
-            confluence_count = 0
-            confluence_factors = []
-            
-            if chart_pattern:
-                confluence_count += 1
-                confluence_factors.append(f"Pattern: {chart_pattern}")
-            
-            if candle_pattern:
-                confluence_count += 1
-                confluence_factors.append(f"Candle: {candle_pattern}")
-            
-            if volume_confirmed:
-                confluence_count += 1
-                confluence_factors.append("Volume Spike")
-            
-            if rsi_confirmed:
-                confluence_count += 1
-                confluence_factors.append("RSI Aligned")
-            
-            if atr_confirmed:
-                confluence_count += 1
-                confluence_factors.append("Volatility OK")
-            
-            # MUST have at least 4 out of 5 factors (trend + structure already confirmed)
-            if confluence_count < 4:
-                continue
-            
-            # Calculate confidence (7 factors total, we have 5 here + trend + structure)
-            confidence = int((confluence_count / 5) * 100)
-            
-            # ENTRY LOGIC
-            entry_zone = last['EMA_20']
-            
-            if master_trend == "UP":
-                # Check if price is near entry zone
-                if abs(current_price - entry_zone) <= sl_dist * 1.5:
-                    entry = round(entry_zone, decimals)
-                    status = "LIVE" if current_price <= entry_zone * 1.002 else "PENDING"
-                    
-                    setups.append(Setup(
-                        timeframe=tf.upper(), direction="BUY", entry=entry,
-                        stopLoss=round(entry - sl_dist, decimals),
-                        takeProfit=round(entry + tp_dist, decimals),
-                        current_price=round(current_price, decimals),
-                        status=status, signal_time=current_time,
-                        confidence=confidence,
-                        confluence_factors=confluence_factors,
-                        strategy_name=f"{config['type']}: Multi-Factor Setup",
-                        strategy_logic=f"H4 UP + H1 Structure + {confluence_count}/5 factors confirmed"
-                    ))
-            
+                entry = round(last['Close'], decimals)
+                status = "LIVE"
+                setups.append(Setup(
+                    timeframe="H1", direction="BUY", entry=entry,
+                    stopLoss=round(entry - sl_dist, decimals),
+                    takeProfit=round(entry + tp_dist, decimals),
+                    current_price=round(current_price, decimals),
+                    status=status, signal_time=current_time,
+                    confidence=score, confluence_factors=factors,
+                    strategy_name=f"Smart {setup_type}",
+                    strategy_logic=f"Score: {score}/100. {master_trend} trend confirmed."
+                ))
             elif master_trend == "DOWN":
-                if abs(current_price - entry_zone) <= sl_dist * 1.5:
-                    entry = round(entry_zone, decimals)
-                    status = "LIVE" if current_price >= entry_zone * 0.998 else "PENDING"
-                    
-                    setups.append(Setup(
-                        timeframe=tf.upper(), direction="SELL", entry=entry,
-                        stopLoss=round(entry + sl_dist, decimals),
-                        takeProfit=round(entry - tp_dist, decimals),
-                        current_price=round(current_price, decimals),
-                        status=status, signal_time=current_time,
-                        confidence=confidence,
-                        confluence_factors=confluence_factors,
-                        strategy_name=f"{config['type']}: Multi-Factor Setup",
-                        strategy_logic=f"H4 DOWN + H1 Structure + {confluence_count}/5 factors confirmed"
-                    ))
+                entry = round(last['Close'], decimals)
+                status = "LIVE"
+                setups.append(Setup(
+                    timeframe="H1", direction="SELL", entry=entry,
+                    stopLoss=round(entry + sl_dist, decimals),
+                    takeProfit=round(entry - tp_dist, decimals),
+                    current_price=round(current_price, decimals),
+                    status=status, signal_time=current_time,
+                    confidence=score, confluence_factors=factors,
+                    strategy_name=f"Smart {setup_type}",
+                    strategy_logic=f"Score: {score}/100. {master_trend} trend confirmed."
+                ))
 
         if setups:
             return Signal(pair=pair, setups=setups)
@@ -276,11 +171,12 @@ def analyze_pair(pair, symbol):
 @app.get("/signals")
 def get_signals():
     final_signals = []
-    for pair, symbol in MARKETS.items():
-        signal = analyze_pair(pair, symbol)
-        if signal:
-            final_signals.append(signal)
-        time.sleep(0.1)
+    # MULTI-THREADING: Scans 5 pairs at the exact same time for blazing speed!
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(scan_single_pair, MARKETS.items())
+        for result in results:
+            if result:
+                final_signals.append(result)
     return final_signals
 
 if __name__ == "__main__":
