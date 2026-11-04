@@ -4,16 +4,17 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <meta name="theme-color" content="#0b0e14">
-    <title>FX PRO</title>
+    <title>FX PRO TERMINAL</title>
     <style>
         :root {
             --bg-dark: #0b0e14; --bg-card: #151a23; --bg-hover: #1e2532; --border: #2a3142;
             --text-main: #ffffff; --text-muted: #8b9bb4; --gold: #d4a843;
-            --green: #00e676; --red: #ff1744; --blue: #2979ff;
+            --green: #00e676; --red: #ff1744; --blue: #2979ff; --orange: #ff9100;
         }
         * { margin: 0; padding: 0; box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; }
         body { background: var(--bg-dark); color: var(--text-main); min-height: 100vh; display: flex; }
         
+        /* DESKTOP SIDEBAR */
         .sidebar { width: 260px; background: var(--bg-card); border-right: 1px solid var(--border); display: flex; flex-direction: column; position: fixed; height: 100vh; z-index: 50; }
         .logo { padding: 24px; font-size: 22px; font-weight: 900; color: var(--gold); letter-spacing: 1px; border-bottom: 1px solid var(--border); }
         .nav-link { padding: 16px 24px; color: var(--text-muted); text-decoration: none; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 12px; transition: 0.2s; border-left: 3px solid transparent; }
@@ -21,6 +22,7 @@
         .nav-link.active { background: rgba(212, 168, 67, 0.1); color: var(--gold); border-left-color: var(--gold); }
         .sidebar-footer { margin-top: auto; padding: 24px; font-size: 11px; color: var(--text-muted); border-top: 1px solid var(--border); line-height: 1.5; }
 
+        /* MAIN CONTENT */
         .main-content { margin-left: 260px; flex: 1; padding: 32px; width: calc(100% - 260px); }
         .top-bar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 32px; flex-wrap: wrap; gap: 16px; }
         .page-title { font-size: 28px; font-weight: 800; }
@@ -43,8 +45,8 @@
 
         .setup-block { background: var(--bg-dark); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; position: relative; overflow: hidden; transition: all 0.3s; }
         .setup-block:last-child { margin-bottom: 0; }
-        .setup-block.is-live-setup { border-color: var(--green); background: rgba(0, 230, 118, 0.05); box-shadow: 0 0 15px rgba(0, 230, 118, 0.1); }
-        .setup-block.is-pending-setup { border-color: var(--blue); background: rgba(41, 121, 255, 0.05); }
+        .setup-block.is-live-setup { border-color: var(--green); background: rgba(0, 230, 118, 0.03); box-shadow: 0 0 15px rgba(0, 230, 118, 0.08); }
+        .setup-block.is-pending-setup { border-color: var(--blue); background: rgba(41, 121, 255, 0.03); }
         
         .setup-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .tf-badge { background: var(--bg-card); color: var(--text-muted); padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 800; }
@@ -56,14 +58,20 @@
         .status-label.live { color: var(--green); }
         .status-label.pending { color: var(--blue); }
 
-        .strategy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;}
-        .strategy-name { font-size: 13px; color: var(--text-main); font-weight: 700; }
-        .badges-wrap { display: flex; gap: 8px; }
-        .badge { font-size: 10px; font-weight: 700; padding: 4px 8px; border-radius: 4px; }
+        .strategy-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;}
+        .strategy-name { font-size: 14px; color: var(--text-main); font-weight: 700; }
+        .zone-type { font-size: 11px; color: var(--text-muted); margin-top: 2px; font-weight: 600; }
+        .badges-wrap { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end;}
+        .badge { font-size: 10px; font-weight: 700; padding: 4px 8px; border-radius: 4px; white-space: nowrap; }
         .time-badge { color: var(--gold); background: var(--bg-card); border: 1px solid rgba(212, 168, 67, 0.3); }
         .conf-badge { color: var(--green); background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.3); }
         
-        .confluence-list { font-size: 10px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; padding: 8px; background: var(--bg-card); border-radius: 6px; border-left: 2px solid var(--gold); }
+        .risk-badge { display: inline-block; font-size: 11px; font-weight: 800; padding: 6px 12px; border-radius: 6px; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+        .risk-low { background: rgba(0, 230, 118, 0.15); color: var(--green); border: 1px solid rgba(0, 230, 118, 0.3); }
+        .risk-med { background: rgba(255, 145, 0, 0.15); color: var(--orange); border: 1px solid rgba(255, 145, 0, 0.3); }
+        .risk-high { background: rgba(255, 23, 68, 0.15); color: var(--red); border: 1px solid rgba(255, 23, 68, 0.3); }
+
+        .confluence-list { font-size: 11px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.6; padding: 10px; background: var(--bg-card); border-radius: 6px; border-left: 3px solid var(--gold); }
         .strategy-text { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; font-style: italic; line-height: 1.4; }
 
         .price-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px; }
@@ -77,17 +85,20 @@
         .timer-fill { height: 100%; background: var(--gold); border-radius: 2px; transition: width 1s linear; }
         .timer-text { font-size: 11px; color: var(--text-muted); font-weight: 700; min-width: 50px; text-align: right; font-variant-numeric: tabular-nums; }
 
+        /* VIEWS */
         .view-section { display: none; animation: fadeIn 0.3s ease; }
         .view-section.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
         .empty-state { text-align: center; padding: 60px 20px; color: var(--text-muted); }
         .empty-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
 
+        /* MOBILE BOTTOM NAV */
         .mobile-nav { display: none; position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg-card); border-top: 1px solid var(--border); padding: 12px 0 24px; z-index: 100; justify-content: space-around; }
         .mob-link { display: flex; flex-direction: column; align-items: center; gap: 4px; color: var(--text-muted); font-size: 11px; font-weight: 600; cursor: pointer; text-decoration: none; }
         .mob-link.active { color: var(--gold); }
         .mob-icon { font-size: 20px; }
 
+        /* RESPONSIVE */
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .main-content { margin-left: 0; width: 100%; padding: 16px; padding-bottom: 90px; }
@@ -99,6 +110,7 @@
     </style>
 </head>
 <body>
+    <!-- DESKTOP SIDEBAR -->
     <aside class="sidebar">
         <div class="logo">FX PRO</div>
         <a class="nav-link active" onclick="switchView('dashboard', this)">📊 Dashboard</a>
@@ -108,6 +120,7 @@
         <div class="sidebar-footer">FX PRO STRATEGY<br>Educational use only. Not financial advice.</div>
     </aside>
 
+    <!-- MAIN CONTENT -->
     <main class="main-content">
         <div id="view-dashboard" class="view-section active">
             <div class="top-bar">
@@ -129,6 +142,7 @@
         <div id="view-settings" class="view-section"><div class="top-bar"><div class="page-title">Settings</div></div><div class="empty-state"><div class="empty-icon">⚙️</div><div>Manage preferences.</div></div></div>
     </main>
 
+    <!-- MOBILE NAV -->
     <nav class="mobile-nav">
         <a class="mob-link active" onclick="switchView('dashboard', this)"><span class="mob-icon">📊</span>Dashboard</a>
         <a class="mob-link" onclick="switchView('signals', this)"><span class="mob-icon">🎯</span>Signals</a>
@@ -137,6 +151,7 @@
     </nav>
 
     <script>
+        // 1. WORKING BUTTONS: View Switching
         function switchView(viewName, element) {
             document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
             document.getElementById('view-' + viewName).classList.add('active');
@@ -146,6 +161,7 @@
             });
         }
 
+        // 2. WORKING BUTTONS: Filtering
         let currentFilter = 'all';
         function filterSignals(filter, btn) {
             currentFilter = filter;
@@ -154,18 +170,20 @@
             renderSignals(window.lastSignals || []);
         }
 
+        // 3. FETCH DATA
         async function fetchSignals() {
             try {
-                // ⚠️ REPLACE WITH YOUR ACTUAL RENDER URL ⚠️
-                const res = await fetch('https://fx-sc-app.onrender.com/signals');
+                // ⚠️ CRITICAL: REPLACE THIS WITH YOUR ACTUAL RENDER URL ⚠️
+                const res = await fetch('https://YOUR-RENDER-URL.onrender.com/signals');
                 const signals = await res.json();
                 window.lastSignals = signals;
                 renderSignals(signals);
             } catch (e) {
-                document.getElementById('signalGrid').innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>Backend Disconnected.</div></div>`;
+                document.getElementById('signalGrid').innerHTML = `<div class="empty-state"><div class="empty-icon">⚠️</div><div>Backend Disconnected. Check Render URL.</div></div>`;
             }
         }
 
+        // 4. RENDER LOGIC
         function renderSignals(signals) {
             const grid = document.getElementById('signalGrid');
             if (!signals || signals.length === 0) {
@@ -179,7 +197,6 @@
             signals.forEach(s => {
                 let filteredSetups = s.setups;
                 
-                // FILTER LOGIC
                 if (currentFilter === 'live') {
                     filteredSetups = s.setups.filter(setup => setup.status === 'LIVE');
                 } else if (currentFilter === 'pending') {
@@ -198,7 +215,6 @@
                     const isBuy = setup.direction === 'BUY';
                     const uniqueId = `s-${globalIdx}`;
                     
-                    // DYNAMIC STYLING BASED ON STATUS
                     const isLive = setup.status === 'LIVE';
                     const blockClass = isLive ? 'setup-block is-live-setup' : 'setup-block is-pending-setup';
                     const statusClass = isLive ? 'live' : 'pending';
@@ -206,7 +222,14 @@
                     
                     const signalTime = setup.signal_time || 'Just now';
                     const confidence = setup.confidence || 0;
+                    const zoneType = setup.zone_type || 'Standard Zone';
+                    const riskLevel = setup.risk_level || 'Medium Risk';
                     const factors = setup.confluence_factors ? setup.confluence_factors.join(' • ') : 'Analyzing...';
+
+                    // Risk Badge Color Logic
+                    let riskClass = 'risk-med';
+                    if(riskLevel.includes('Low')) riskClass = 'risk-low';
+                    else if(riskLevel.includes('High')) riskClass = 'risk-high';
 
                     html += `<div class="${blockClass}" id="block-${uniqueId}">
                         <div class="setup-top">
@@ -219,15 +242,23 @@
                                 ${statusText}
                             </span>
                         </div>
+                        
                         <div class="strategy-header">
-                            <div class="strategy-name">${setup.strategy_name}</div>
+                            <div>
+                                <div class="strategy-name">${setup.strategy_name}</div>
+                                <div class="zone-type">📍 ${zoneType}</div>
+                            </div>
                             <div class="badges-wrap">
                                 <div class="badge time-badge">🕒 ${signalTime}</div>
                                 <div class="badge conf-badge">✓ ${confidence}%</div>
                             </div>
                         </div>
+
+                        <div class="risk-badge ${riskClass}">${riskLevel}</div>
+                        
                         <div class="confluence-list">${factors}</div>
                         <div class="strategy-text">${setup.strategy_logic}</div>
+                        
                         <div class="price-row">
                             <div class="price-box"><div class="price-label">ENTRY</div><div class="price-val entry">${setup.entry}</div></div>
                             <div class="price-box"><div class="price-label">STOP</div><div class="price-val sl">${setup.stopLoss}</div></div>
@@ -246,6 +277,7 @@
             startTimers(globalIdx);
         }
 
+        // 5. TIMER LOGIC
         function startTimers(total) {
             for (let i = 0; i < total; i++) {
                 const id = `s-${i}`;
@@ -266,6 +298,7 @@
             }
         }
 
+        // Initialize
         fetchSignals();
         setInterval(fetchSignals, 60000); 
     </script>
