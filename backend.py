@@ -18,8 +18,6 @@ MARKETS = {
     "XAUUSD": "GC=F", "XAGUSD": "SI=F", "USOIL": "CL=F"
 }
 
-TIMEFRAMES = ["15m", "30m", "1h"]
-
 class Setup(BaseModel):
     timeframe: str
     direction: str
@@ -34,122 +32,106 @@ class Signal(BaseModel):
     pair: str
     setups: List[Setup]
 
-def calculate_indicators(df):
-    delta = df['Close'].diff()
-    gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
-    loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
-    rs = gain / loss
-    df['RSI'] = 100 - (100 / (1 + rs))
-    df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
-    df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
-    
+def get_ema(df, span):
+    return df['Close'].ewm(span=span, adjust=False).mean()
+
+def get_atr(df, period=14):
     high_low = df['High'] - df['Low']
-    tr = high_low.rolling(14).mean()
-    df['ATR'] = tr
-    return df
+    high_close = (df['High'] - df['Close'].shift()).abs()
+    low_close = (df['Low'] - df['Close'].shift()).abs()
+    tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+    return tr.rolling(period).mean()
 
-def get_sniper_setups(pair, symbol, tf):
+def get_top_down_signal(pair, symbol):
     try:
-        df = yf.Ticker(symbol).history(period="5d", interval=tf)
-        if df.empty or len(df) < 50: return []
+        # 1. GET 4-HOUR DATA (The Trend Filter)
+        h4_df = yf.Ticker(symbol).history(period="6mo", interval="4h")
+        if h4_df.empty or len(h4_df) < 200: return None
         
-        df = calculate_indicators(df)
-        last = df.iloc[-1] 
-        prev = df.iloc[-2] 
+        h4_df['EMA_50'] = get_ema(h4_df, 50)
+        h4_df['EMA_200'] = get_ema(h4_df, 200)
         
-        current_price = last['Close']
-        atr = last['ATR']
+        # Use the last CLOSED 4H candle to determine trend
+        last_h4 = h4_df.iloc[-2] 
+        h4_trend = "UP" if last_h4['EMA_50'] > last_h4['EMA_200'] else "DOWN"
+
+        # 2. GET 1-HOUR DATA (The Entry Trigger)
+        h1_df = yf.Ticker(symbol).history(period="1mo", interval="1h")
+        if h1_df.empty or len(h1_df) < 50: return None
+        
+        h1_df['EMA_20'] = get_ema(h1_df, 20)
+        h1_df['ATR'] = get_atr(h1_df)
+        
+        # Use the last CLOSED 1H candle for the trigger
+        last_h1 = h1_df.iloc[-2]
+        current_price = h1_df.iloc[-1]['Close'] # Live price
+        atr = last_h1['ATR']
         decimals = 5 if current_price < 10 else 2
+        
         setups = []
+        
+        # Risk Management: 1:3 RR
+        sl_distance = atr * 0.5
+        tp_distance = atr * 1.5 # 3x the risk
 
         # ==========================================
-        # SNIPER RISK MANAGEMENT (1:3 RISK TO REWARD)
+        # BUY LOGIC (Only if 4H Trend is UP)
         # ==========================================
-        # Stop Loss = 0.4 ATR (Tight risk)
-        # Take Profit = 1.2 ATR (Exactly 3x the risk)
-        sl_distance = atr * 0.4
-        tp_distance = atr * 1.2 
+        if h4_trend == "UP":
+            # Check if the closed 1H candle pulled back to the 20 EMA and rejected it
+            # (Low touched or went below EMA20, but Closed ABOVE EMA20)
+            ema20_val = last_h1['EMA_20']
+            pulled_back = last_h1['Low'] <= ema20_val * 1.002
+            rejected = last_h1['Close'] > ema20_val
+            
+            if pulled_back and rejected:
+                entry = round(last_h1['Close'], decimals)
+                # Live Proximity: Only show if live price is near the entry
+                if abs(current_price - entry) <= sl_distance:
+                    setups.append(Setup(
+                        timeframe="H1 (4H Trend: UP)", direction="BUY", entry=entry,
+                        stopLoss=round(entry - sl_distance, decimals),
+                        takeProfit=round(entry + tp_distance, decimals),
+                        current_price=round(current_price, decimals),
+                        strategy_name="Top-Down Pullback",
+                        strategy_logic=f"4H is Bullish. 1H pulled back to 20 EMA ({round(ema20_val, decimals)}) and rejected. Buyers defending trend."
+                    ))
 
         # ==========================================
-        # STRATEGY 1: RSI Sniper Pullback
+        # SELL LOGIC (Only if 4H Trend is DOWN)
         # ==========================================
-        if prev['EMA_20'] > prev['EMA_50'] and 35 <= prev['RSI'] <= 45:
-            entry = round(prev['Close'], decimals)
-            if abs(current_price - entry) <= sl_distance:
-                setups.append(Setup(
-                    timeframe=tf.upper(), direction="BUY", entry=entry,
-                    stopLoss=round(entry - sl_distance, decimals),
-                    takeProfit=round(entry + tp_distance, decimals),
-                    current_price=round(current_price, decimals),
-                    strategy_name="RSI Sniper Pullback",
-                    strategy_logic="Uptrend pullback. RSI reloaded. Price at exact entry."
-                ))
-                
-        elif prev['EMA_20'] < prev['EMA_50'] and 55 <= prev['RSI'] <= 65:
-            entry = round(prev['Close'], decimals)
-            if abs(current_price - entry) <= sl_distance:
-                setups.append(Setup(
-                    timeframe=tf.upper(), direction="SELL", entry=entry,
-                    stopLoss=round(entry + sl_distance, decimals),
-                    takeProfit=round(entry - tp_distance, decimals),
-                    current_price=round(current_price, decimals),
-                    strategy_name="RSI Sniper Pullback",
-                    strategy_logic="Downtrend pullback. RSI reloaded. Price at exact entry."
-                ))
+        elif h4_trend == "DOWN":
+            ema20_val = last_h1['EMA_20']
+            pulled_back = last_h1['High'] >= ema20_val * 0.998
+            rejected = last_h1['Close'] < ema20_val
+            
+            if pulled_back and rejected:
+                entry = round(last_h1['Close'], decimals)
+                if abs(current_price - entry) <= sl_distance:
+                    setups.append(Setup(
+                        timeframe="H1 (4H Trend: DOWN)", direction="SELL", entry=entry,
+                        stopLoss=round(entry + sl_distance, decimals),
+                        takeProfit=round(entry - tp_distance, decimals),
+                        current_price=round(current_price, decimals),
+                        strategy_name="Top-Down Pullback",
+                        strategy_logic=f"4H is Bearish. 1H pulled back to 20 EMA ({round(ema20_val, decimals)}) and rejected. Sellers defending trend."
+                    ))
 
-        # ==========================================
-        # STRATEGY 2: Momentum Breakout
-        # ==========================================
-        if current_price > prev['High']:
-            entry = round(prev['High'], decimals)
-            if abs(current_price - entry) <= sl_distance:
-                setups.append(Setup(
-                    timeframe=tf.upper(), direction="BUY", entry=entry,
-                    stopLoss=round(entry - sl_distance, decimals),
-                    takeProfit=round(entry + tp_distance, decimals),
-                    current_price=round(current_price, decimals),
-                    strategy_name="Momentum Breakout",
-                    strategy_logic="Price breaking structure. Entering at the breakout point."
-                ))
-                
-        elif current_price < prev['Low']:
-            entry = round(prev['Low'], decimals)
-            if abs(current_price - entry) <= sl_distance:
-                setups.append(Setup(
-                    timeframe=tf.upper(), direction="SELL", entry=entry,
-                    stopLoss=round(entry + sl_distance, decimals),
-                    takeProfit=round(entry - tp_distance, decimals),
-                    current_price=round(current_price, decimals),
-                    strategy_name="Momentum Breakdown",
-                    strategy_logic="Price breaking structure. Entering at the breakdown point."
-                ))
+        if setups:
+            return Signal(pair=pair, setups=setups)
+        return None
 
-        return setups
     except Exception as e:
-        return []
+        return None
 
 @app.get("/signals")
 def get_signals():
-    raw_signals = {}
-    for pair, symbol in MARKETS.items():
-        all_setups = []
-        for tf in TIMEFRAMES:
-            setups = get_sniper_setups(pair, symbol, tf)
-            all_setups.extend(setups)
-            time.sleep(0.1) 
-        if all_setups:
-            raw_signals[pair] = all_setups
-
     final_signals = []
-    for pair, setups in raw_signals.items():
-        buy_count = sum(1 for s in setups if s.direction == "BUY")
-        sell_count = sum(1 for s in setups if s.direction == "SELL")
-        
-        if buy_count > sell_count:
-            final_signals.append(Signal(pair=pair, setups=[s for s in setups if s.direction == "BUY"]))
-        elif sell_count > buy_count:
-            final_signals.append(Signal(pair=pair, setups=[s for s in setups if s.direction == "SELL"]))
-
+    for pair, symbol in MARKETS.items():
+        signal = get_top_down_signal(pair, symbol)
+        if signal:
+            final_signals.append(signal)
+        time.sleep(0.5) # Prevent rate limits
     return final_signals
 
 if __name__ == "__main__":
