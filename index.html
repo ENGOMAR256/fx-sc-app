@@ -45,7 +45,6 @@
 
         .setup-block { background: var(--bg-dark); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; position: relative; overflow: hidden; transition: all 0.3s; }
         .setup-block:last-child { margin-bottom: 0; }
-        /* THIS IS THE LIVE GLOW EFFECT */
         .setup-block.is-live-setup { border-color: var(--green); background: rgba(0, 230, 118, 0.05); box-shadow: 0 0 15px rgba(0, 230, 118, 0.1); }
         
         .setup-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
@@ -58,6 +57,10 @@
         .status-label.live { color: var(--green); }
         .status-label.pending { color: var(--blue); }
 
+        .strategy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .strategy-name { font-size: 13px; color: var(--text-main); font-weight: 700; }
+        .time-badge { font-size: 10px; color: var(--gold); font-weight: 700; background: var(--bg-card); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(212, 168, 67, 0.3); }
+        
         .strategy-text { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; font-style: italic; line-height: 1.4; }
 
         .price-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px; }
@@ -71,7 +74,7 @@
         .timer-fill { height: 100%; background: var(--gold); border-radius: 2px; transition: width 1s linear; }
         .timer-text { font-size: 11px; color: var(--text-muted); font-weight: 700; min-width: 50px; text-align: right; font-variant-numeric: tabular-nums; }
 
-        /* VIEWS (Makes buttons actually work) */
+        /* VIEWS */
         .view-section { display: none; animation: fadeIn 0.3s ease; }
         .view-section.active { display: block; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -84,7 +87,7 @@
         .mob-link.active { color: var(--gold); }
         .mob-icon { font-size: 20px; }
 
-        /* RESPONSIVE (PHONE PERFECTION) */
+        /* RESPONSIVE */
         @media (max-width: 768px) {
             .sidebar { display: none; }
             .main-content { margin-left: 0; width: 100%; padding: 16px; padding-bottom: 90px; }
@@ -146,7 +149,7 @@
     </nav>
 
     <script>
-        // 1. WORKING BUTTONS: View Switching (Updates BOTH Desktop and Mobile)
+        // 1. WORKING BUTTONS: View Switching
         function switchView(viewName, element) {
             document.querySelectorAll('.view-section').forEach(v => v.classList.remove('active'));
             document.getElementById('view-' + viewName).classList.add('active');
@@ -174,7 +177,7 @@
         async function fetchSignals() {
             try {
                 // ⚠️ YOU MUST REPLACE THIS WITH YOUR ACTUAL RENDER URL ⚠️
-                const res = await fetch('https://fx-sc-app.onrender.com/signals');
+                const res = await fetch('https://YOUR-RENDER-URL.onrender.com/signals');
                 const signals = await res.json();
                 window.lastSignals = signals;
                 renderSignals(signals);
@@ -221,7 +224,7 @@
                     const isBuy = setup.direction === 'BUY';
                     const uniqueId = `s-${globalIdx}`;
                     
-                    // PENDING TO LIVE LOGIC: The moment price hits entry, it turns LIVE
+                    // PENDING TO LIVE LOGIC
                     let isLive = false;
                     if ((isBuy && setup.current_price >= setup.entry) || (!isBuy && setup.current_price <= setup.entry)) {
                         isLive = true;
@@ -230,6 +233,9 @@
                     const statusClass = isLive ? 'live' : 'pending';
                     const statusText = isLive ? 'LIVE' : 'PENDING';
                     const blockClass = isLive ? 'setup-block is-live-setup' : 'setup-block';
+                    
+                    // Get the timestamp from the backend
+                    const signalTime = setup.signal_time || 'Just now';
 
                     html += `<div class="${blockClass}" id="block-${uniqueId}">
                         <div class="setup-top">
@@ -242,7 +248,13 @@
                                 ${statusText}
                             </span>
                         </div>
-                        <div class="strategy-text">${setup.strategy_name}: ${setup.strategy_logic}</div>
+                        
+                        <div class="strategy-header">
+                            <div class="strategy-name">${setup.strategy_name}</div>
+                            <div class="time-badge">🕒 ${signalTime}</div>
+                        </div>
+                        <div class="strategy-text">${setup.strategy_logic}</div>
+                        
                         <div class="price-row">
                             <div class="price-box"><div class="price-label">ENTRY</div><div class="price-val entry">${setup.entry}</div></div>
                             <div class="price-box"><div class="price-label">STOP</div><div class="price-val sl">${setup.stopLoss}</div></div>
