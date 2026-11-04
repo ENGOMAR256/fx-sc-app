@@ -5,6 +5,7 @@ from typing import List
 import yfinance as yf
 import pandas as pd
 import time
+from datetime import datetime
 
 app = FastAPI()
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -24,7 +25,8 @@ class Setup(BaseModel):
     stopLoss: float
     takeProfit: float
     current_price: float
-    status: str # "PENDING" or "LIVE"
+    status: str 
+    signal_time: str # NEW: Exact time signal was found
     strategy_name: str
     strategy_logic: str
 
@@ -42,8 +44,9 @@ def get_atr(df, period=14):
 def analyze_pair(pair, symbol):
     try:
         setups = []
+        current_time = datetime.utcnow().strftime("%H:%M UTC")
         
-        # 1. MASTER TREND (H4) - Fast fetch
+        # 1. MASTER TREND (H4)
         h4_df = yf.Ticker(symbol).history(period="3mo", interval="4h")
         if h4_df.empty or len(h4_df) < 50: return None
         
@@ -71,8 +74,8 @@ def analyze_pair(pair, symbol):
             df['ATR'] = get_atr(df)
             df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
             
-            last = df.iloc[-2]      # Last CLOSED candle (for pattern confirmation)
-            live = df.iloc[-1]      # CURRENT FORMING candle (for live price)
+            last = df.iloc[-2]      # Last CLOSED candle
+            live = df.iloc[-1]      # CURRENT FORMING candle
             
             current_price = live['Close']
             atr = last['ATR']
@@ -80,21 +83,22 @@ def analyze_pair(pair, symbol):
             
             sl_dist = atr * config["sl_mult"]
             tp_dist = atr * config["tp_mult"]
-            
-            # The "Entry Zone" is the 20 EMA of the last closed candle
             entry_zone = last['EMA_20']
+            
+            # Calculate candle body and wicks for AUTHENTIC confirmation
+            candle_range = last['High'] - last['Low']
+            if candle_range == 0: continue
             
             # BUY LOGIC (Only if H4 is UP)
             if master_trend == "UP":
-                # Did the closed candle break structure and pull back?
                 prev_high = df['High'].iloc[-6:-2].max()
                 broke_structure = last['High'] > prev_high
                 touched_zone = last['Low'] <= entry_zone * 1.002
                 
-                if broke_structure and touched_zone:
-                    # PENDING vs LIVE Logic
-                    # If live price is still above the zone, it's PENDING (approaching)
-                    # If live price is at or below the zone, it's LIVE (reacting)
+                # AUTHENTICITY CHECK: Candle must close in the upper half (showing rejection of lower prices)
+                closes_in_upper_half = last['Close'] > last['Low'] + (candle_range * 0.5)
+                
+                if broke_structure and touched_zone and closes_in_upper_half:
                     if current_price > entry_zone * 1.002:
                         status = "PENDING"
                         entry = round(entry_zone, decimals)
@@ -107,9 +111,9 @@ def analyze_pair(pair, symbol):
                         stopLoss=round(entry - sl_dist, decimals),
                         takeProfit=round(entry + tp_dist, decimals),
                         current_price=round(current_price, decimals),
-                        status=status,
+                        status=status, signal_time=current_time,
                         strategy_name=f"{config['type']}: BOS Pullback",
-                        strategy_logic=f"H4 UP. {tf.upper()} broke structure. Waiting for bounce at 20 EMA."
+                        strategy_logic=f"H4 UP. {tf.upper()} broke structure. Candle rejected 20 EMA."
                     ))
 
             # SELL LOGIC (Only if H4 is DOWN)
@@ -118,7 +122,10 @@ def analyze_pair(pair, symbol):
                 broke_structure = last['Low'] < prev_low
                 touched_zone = last['High'] >= entry_zone * 0.998
                 
-                if broke_structure and touched_zone:
+                # AUTHENTICITY CHECK: Candle must close in the lower half
+                closes_in_lower_half = last['Close'] < last['High'] - (candle_range * 0.5)
+                
+                if broke_structure and touched_zone and closes_in_lower_half:
                     if current_price < entry_zone * 0.998:
                         status = "PENDING"
                         entry = round(entry_zone, decimals)
@@ -131,9 +138,9 @@ def analyze_pair(pair, symbol):
                         stopLoss=round(entry + sl_dist, decimals),
                         takeProfit=round(entry - tp_dist, decimals),
                         current_price=round(current_price, decimals),
-                        status=status,
+                        status=status, signal_time=current_time,
                         strategy_name=f"{config['type']}: BOS Pullback",
-                        strategy_logic=f"H4 DOWN. {tf.upper()} broke structure. Waiting for rejection at 20 EMA."
+                        strategy_logic=f"H4 DOWN. {tf.upper()} broke structure. Candle rejected 20 EMA."
                     ))
 
         if setups:
@@ -150,7 +157,7 @@ def get_signals():
         signal = analyze_pair(pair, symbol)
         if signal:
             final_signals.append(signal)
-        time.sleep(0.1) # Optimized speed
+        time.sleep(0.1) 
     return final_signals
 
 if __name__ == "__main__":
