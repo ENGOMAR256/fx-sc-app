@@ -26,7 +26,7 @@ class Setup(BaseModel):
     stopLoss: float
     takeProfit: float
     current_price: float
-    status: str
+    status: str # PENDING or LIVE
     signal_time: str
     confidence: int
     confluence_factors: List[str]
@@ -51,13 +51,12 @@ def get_rsi(df, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def scan_single_pair(pair_symbol_tuple):
-    pair, symbol = pair_symbol_tuple
+def scan_single_pair(pair, symbol):
     try:
         setups = []
         current_time = datetime.utcnow().strftime("%H:%M UTC")
         
-        # 1. FAST TREND CHECK (H4)
+        # 1. MASTER TREND (H4)
         h4_df = yf.Ticker(symbol).history(period="3mo", interval="4h")
         if h4_df.empty or len(h4_df) < 50: return None
         
@@ -69,111 +68,106 @@ def scan_single_pair(pair_symbol_tuple):
         elif last_h4['EMA_50'] < last_h4['EMA_200'] * 0.999: master_trend = "DOWN"
         else: return None
 
-        # 2. SMART ENTRY SCAN (H1)
-        h1_df = yf.Ticker(symbol).history(period="1mo", interval="1h")
-        if h1_df.empty or len(h1_df) < 30: return None
-        
-        h1_df['ATR'] = get_atr(h1_df)
-        h1_df['EMA_20'] = h1_df['Close'].ewm(span=20, adjust=False).mean()
-        h1_df['RSI'] = get_rsi(h1_df)
-        h1_df['Vol_SMA'] = h1_df['Volume'].rolling(20).mean()
-        
-        last = h1_df.iloc[-2]
-        live = h1_df.iloc[-1]
-        
-        current_price = live['Close']
-        atr = last['ATR']
-        rsi = last['RSI']
-        volume_ratio = last['Volume'] / last['Vol_SMA'] if last['Vol_SMA'] > 0 else 1
-        decimals = 5 if current_price < 10 else 2
-        
-        sl_dist = atr * 1.5
-        tp_dist = atr * 4.5
-        
-        score = 0
-        factors = []
-        entry_zone = last['EMA_20']
-        
-        # Factor 1: H4 Trend (20 pts)
-        score += 20
-        factors.append(f"H4 Trend: {master_trend}")
-        
-        # Factor 2: RSI Alignment (20 pts)
-        rsi_ok = False
-        if master_trend == "UP" and 40 < rsi < 80: 
-            rsi_ok = True; score += 20; factors.append(f"RSI Bullish ({round(rsi,1)})")
-        elif master_trend == "DOWN" and 20 < rsi < 60: 
-            rsi_ok = True; score += 20; factors.append(f"RSI Bearish ({round(rsi,1)})")
-            
-        # Factor 3: Volume (15 pts)
-        if volume_ratio > 1.0: 
-            score += 15; factors.append("Volume Normal/High")
-            
-        # Factor 4: Candle Shape (15 pts)
-        candle_range = last['High'] - last['Low']
-        if candle_range > 0:
-            body = abs(last['Close'] - last['Open'])
-            if body > candle_range * 0.5: 
-                score += 15; factors.append("Strong Candle Body")
+        # 2. SCAN ALL TIMEFRAMES (Scalping, Day, Intraday, Swing)
+        timeframes_config = [
+            {"tf": "15m", "period": "5d",  "type": "Scalping",    "sl_mult": 1.0,  "tp_mult": 3.0},
+            {"tf": "30m", "period": "10d", "type": "Day Trading", "sl_mult": 1.2,  "tp_mult": 3.6},
+            {"tf": "1h",  "period": "1mo", "type": "Intraday",    "sl_mult": 1.5,  "tp_mult": 4.5},
+            {"tf": "4h",  "period": "3mo", "type": "Swing",       "sl_mult": 2.0,  "tp_mult": 6.0}
+        ]
 
-        # Factor 5: ENTRY TYPE (30 pts) - THIS IS THE KEY TO MORE PAIRS!
-        is_valid_entry = False
-        setup_type = ""
-        
-        # Type A: Pullback (Price near EMA)
-        if master_trend == "UP" and last['Low'] <= entry_zone * 1.005 and last['Close'] > entry_zone:
-            is_valid_entry = True; score += 30; setup_type = "Pullback Bounce"
-        elif master_trend == "DOWN" and last['High'] >= entry_zone * 0.995 and last['Close'] < entry_zone:
-            is_valid_entry = True; score += 30; setup_type = "Pullback Rejection"
+        for config in timeframes_config:
+            tf = config["tf"]
+            df = yf.Ticker(symbol).history(period=config["period"], interval=tf)
+            if df.empty or len(df) < 30: continue
             
-        # Type B: Momentum (Price trending away from EMA with strength)
-        elif master_trend == "UP" and last['Close'] > entry_zone and last['Close'] > last['Open'] and rsi > 50:
-            is_valid_entry = True; score += 30; setup_type = "Momentum Continuation"
-        elif master_trend == "DOWN" and last['Close'] < entry_zone and last['Close'] < last['Open'] and rsi < 50:
-            is_valid_entry = True; score += 30; setup_type = "Momentum Breakdown"
+            df['ATR'] = get_atr(df)
+            df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+            df['RSI'] = get_rsi(df)
+            df['Vol_SMA'] = df['Volume'].rolling(20).mean()
+            
+            last = df.iloc[-2]
+            live = df.iloc[-1]
+            
+            current_price = live['Close']
+            atr = last['ATR']
+            rsi = last['RSI']
+            volume_ratio = last['Volume'] / last['Vol_SMA'] if last['Vol_SMA'] > 0 else 1
+            decimals = 5 if current_price < 10 else 2
+            
+            sl_dist = atr * config["sl_mult"]
+            tp_dist = atr * config["tp_mult"]
+            entry_zone = last['EMA_20']
+            
+            # SCORING SYSTEM
+            score = 0
+            factors = []
+            
+            score += 20; factors.append(f"H4 Trend: {master_trend}")
+            
+            is_pullback = False
+            if master_trend == "UP" and last['Low'] <= entry_zone * 1.003 and last['Close'] > entry_zone:
+                is_pullback = True; score += 20; factors.append(f"{tf.upper()} Pullback to 20 EMA")
+            elif master_trend == "DOWN" and last['High'] >= entry_zone * 0.997 and last['Close'] < entry_zone:
+                is_pullback = True; score += 20; factors.append(f"{tf.upper()} Pullback to 20 EMA")
+                
+            candle_range = last['High'] - last['Low']
+            if candle_range > 0:
+                lower_wick = min(last['Open'], last['Close']) - last['Low']
+                upper_wick = last['High'] - max(last['Open'], last['Close'])
+                if master_trend == "UP" and lower_wick > candle_range * 0.3:
+                    score += 20; factors.append("Bullish Rejection Wick")
+                elif master_trend == "DOWN" and upper_wick > candle_range * 0.3:
+                    score += 20; factors.append("Bearish Rejection Wick")
+                    
+            if 30 < rsi < 70: score += 20; factors.append(f"RSI Healthy ({round(rsi,1)})")
+            if volume_ratio > 1.0: score += 20; factors.append("Volume Confirmed")
 
-        # ONLY SHOW IF SCORE IS 65+ (Smart but inclusive)
-        if score >= 65 and is_valid_entry and rsi_ok:
-            if master_trend == "UP":
-                entry = round(last['Close'], decimals)
-                status = "LIVE"
-                setups.append(Setup(
-                    timeframe="H1", direction="BUY", entry=entry,
-                    stopLoss=round(entry - sl_dist, decimals),
-                    takeProfit=round(entry + tp_dist, decimals),
-                    current_price=round(current_price, decimals),
-                    status=status, signal_time=current_time,
-                    confidence=score, confluence_factors=factors,
-                    strategy_name=f"Smart {setup_type}",
-                    strategy_logic=f"Score: {score}/100. {master_trend} trend confirmed."
-                ))
-            elif master_trend == "DOWN":
-                entry = round(last['Close'], decimals)
-                status = "LIVE"
-                setups.append(Setup(
-                    timeframe="H1", direction="SELL", entry=entry,
-                    stopLoss=round(entry + sl_dist, decimals),
-                    takeProfit=round(entry - tp_dist, decimals),
-                    current_price=round(current_price, decimals),
-                    status=status, signal_time=current_time,
-                    confidence=score, confluence_factors=factors,
-                    strategy_name=f"Smart {setup_type}",
-                    strategy_logic=f"Score: {score}/100. {master_trend} trend confirmed."
-                ))
+            # PENDING vs LIVE LOGIC
+            if score >= 60 and is_pullback:
+                if master_trend == "UP":
+                    entry = round(entry_zone, decimals)
+                    # If price is still above the entry zone, it is PENDING. If it touched it, it is LIVE.
+                    status = "PENDING" if current_price > entry * 1.002 else "LIVE"
+                    
+                    setups.append(Setup(
+                        timeframe=tf.upper(), direction="BUY", entry=entry,
+                        stopLoss=round(entry - sl_dist, decimals),
+                        takeProfit=round(entry + tp_dist, decimals),
+                        current_price=round(current_price, decimals),
+                        status=status, signal_time=current_time,
+                        confidence=score, confluence_factors=factors,
+                        strategy_name=f"{config['type']} ({tf.upper()})",
+                        strategy_logic=f"Score: {score}/100. {master_trend} trend pullback."
+                    ))
+                
+                elif master_trend == "DOWN":
+                    entry = round(entry_zone, decimals)
+                    status = "PENDING" if current_price < entry * 0.998 else "LIVE"
+                    
+                    setups.append(Setup(
+                        timeframe=tf.upper(), direction="SELL", entry=entry,
+                        stopLoss=round(entry + sl_dist, decimals),
+                        takeProfit=round(entry - tp_dist, decimals),
+                        current_price=round(current_price, decimals),
+                        status=status, signal_time=current_time,
+                        confidence=score, confluence_factors=factors,
+                        strategy_name=f"{config['type']} ({tf.upper()})",
+                        strategy_logic=f"Score: {score}/100. {master_trend} trend pullback."
+                    ))
 
         if setups:
             return Signal(pair=pair, setups=setups)
         return None
-
     except Exception:
         return None
 
 @app.get("/signals")
 def get_signals():
     final_signals = []
-    # MULTI-THREADING: Scans 5 pairs at the exact same time for blazing speed!
-    with ThreadPoolExecutor(max_workers=5) as executor:
-        results = executor.map(scan_single_pair, MARKETS.items())
+    # MULTI-THREADING: Scans 6 pairs at the exact same time for blazing speed!
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        results = executor.map(lambda item: scan_single_pair(item[0], item[1]), MARKETS.items())
         for result in results:
             if result:
                 final_signals.append(result)
