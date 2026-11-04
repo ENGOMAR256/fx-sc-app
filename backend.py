@@ -18,8 +18,7 @@ MARKETS = {
     "XAUUSD": "GC=F", "XAGUSD": "SI=F", "USOIL": "CL=F"
 }
 
-# ALL TIMEFRAMES INCLUDED (1m added for pure scalping)
-TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"]
+TIMEFRAMES = ["5m", "15m", "30m", "1h", "4h"] # Removed 1m to prevent noisy contradictions
 
 class Setup(BaseModel):
     timeframe: str
@@ -42,8 +41,6 @@ def calculate_indicators(df):
     loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
     rs = gain / loss
     df['RSI'] = 100 - (100 / (1 + rs))
-    
-    # EMAs for Trend and Scalping
     df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
     df['EMA_50'] = df['Close'].ewm(span=50, adjust=False).mean()
     df['EMA_200'] = df['Close'].ewm(span=200, adjust=False).mean()
@@ -62,10 +59,8 @@ def calculate_indicators(df):
 
 def get_setups(pair, symbol, tf):
     try:
-        # Fetch data (3mo for higher TFs, 5d for 1m/5m to avoid timeout)
-        period = "5d" if tf in ["1m", "5m"] else "3mo"
+        period = "5d" if tf in ["5m", "15m"] else "3mo"
         df = yf.Ticker(symbol).history(period=period, interval=tf)
-        
         if df.empty or len(df) < 50: return []
         
         df = calculate_indicators(df)
@@ -77,107 +72,77 @@ def get_setups(pair, symbol, tf):
         decimals = 5 if current_price < 10 else 2
         setups = []
 
-        # DYNAMIC RISK MANAGEMENT (Anti-Gambling)
-        # Scalping (M1-M15): Tighter stops, quick targets (1:1.5 RR for high win rate)
-        # Swing (H1-D1): Wider stops, massive targets (1:3 RR)
-        if tf in ["1m", "5m", "15m"]:
-            sl_mult, tp_mult = 1.0, 1.5
-        elif tf == "30m":
-            sl_mult, tp_mult = 1.5, 2.5
-        else:
-            sl_mult, tp_mult = 2.0, 4.0
+        if tf in ["5m", "15m"]: sl_mult, tp_mult = 1.0, 1.5
+        elif tf == "30m": sl_mult, tp_mult = 1.5, 2.5
+        else: sl_mult, tp_mult = 2.0, 4.0
 
-        # ==========================================
-        # STRATEGY 7: RSI SNIPER SCALPER (High Win Rate)
-        # ==========================================
-        # BUY SCALP: Uptrend (EMA20 > EMA50), RSI pulls back to 30-45, then bounces
+        # 1. RSI Sniper Scalp
         if last['EMA_20'] > last['EMA_50'] and 30 <= current_rsi <= 45 and last['Close'] > prev['High']:
-            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), 
-                stopLoss=round(current_price - (atr * sl_mult), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="RSI Sniper Scalp", strategy_logic="Uptrend pullback. RSI reloaded in buy zone. Momentum shifting up."))
-        
-        # SELL SCALP: Downtrend (EMA20 < EMA50), RSI pulls back to 55-70, then drops
+            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), stopLoss=round(current_price - (atr * sl_mult), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="RSI Sniper Scalp", strategy_logic="Uptrend pullback. RSI reloaded in buy zone."))
         elif last['EMA_20'] < last['EMA_50'] and 55 <= current_rsi <= 70 and last['Close'] < prev['Low']:
-            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), 
-                stopLoss=round(current_price + (atr * sl_mult), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="RSI Sniper Scalp", strategy_logic="Downtrend pullback. RSI reloaded in sell zone. Momentum shifting down."))
+            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), stopLoss=round(current_price + (atr * sl_mult), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="RSI Sniper Scalp", strategy_logic="Downtrend pullback. RSI reloaded in sell zone."))
 
-        # ==========================================
-        # STRATEGY 1: SMC / Liquidity Grab (Extreme Reversals)
-        # ==========================================
-        if current_rsi < 20: # Tightened for scalping precision
-            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), 
-                stopLoss=round(current_price - (atr * sl_mult), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="SMC / Liquidity Grab", strategy_logic="Extreme oversold. High probability snap-back bounce."))
+        # 2. SMC / Liquidity
+        if current_rsi < 20:
+            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), stopLoss=round(current_price - (atr * sl_mult), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="SMC / Liquidity Grab", strategy_logic="Extreme oversold. High probability snap-back."))
         elif current_rsi > 80:
-            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), 
-                stopLoss=round(current_price + (atr * sl_mult), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="SMC / Liquidity Grab", strategy_logic="Extreme overbought. High probability snap-back pullback."))
+            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), stopLoss=round(current_price + (atr * sl_mult), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="SMC / Liquidity Grab", strategy_logic="Extreme overbought. High probability snap-back."))
 
-        # ==========================================
-        # STRATEGY 2: Trend Following (EMA Pullback)
-        # ==========================================
+        # 3. Trend Following
         if last['EMA_50'] > last['EMA_200'] and current_price > last['EMA_50'] and last['Low'] <= last['EMA_50'] * 1.002:
-            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), 
-                stopLoss=round(last['EMA_200'], decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="Trend Following", strategy_logic="Strong macro uptrend. Pullback to 50 EMA confirmed."))
+            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), stopLoss=round(last['EMA_200'], decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="Trend Following", strategy_logic="Macro uptrend. Pullback to 50 EMA."))
         elif last['EMA_50'] < last['EMA_200'] and current_price < last['EMA_50'] and last['High'] >= last['EMA_50'] * 0.998:
-            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), 
-                stopLoss=round(last['EMA_200'], decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="Trend Following", strategy_logic="Strong macro downtrend. Pullback to 50 EMA confirmed."))
+            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), stopLoss=round(last['EMA_200'], decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="Trend Following", strategy_logic="Macro downtrend. Pullback to 50 EMA."))
 
-        # ==========================================
-        # STRATEGY 3: Momentum Breakout
-        # ==========================================
+        # 4. Momentum Breakout
         if current_price > prev['High_20'] and last['Volume'] > last['Vol_SMA'] * 1.5:
-            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), 
-                stopLoss=round(current_price - (atr * sl_mult), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="Momentum Breakout", strategy_logic="High volume breakout above 20-period high."))
+            setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), stopLoss=round(current_price - (atr * sl_mult), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="Momentum Breakout", strategy_logic="High volume breakout above 20-period high."))
         elif current_price < prev['Low_20'] and last['Volume'] > last['Vol_SMA'] * 1.5:
-            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), 
-                stopLoss=round(current_price + (atr * sl_mult), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), 
-                rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                strategy_name="Momentum Breakout", strategy_logic="High volume breakdown below 20-period low."))
+            setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), stopLoss=round(current_price + (atr * sl_mult), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="Momentum Breakout", strategy_logic="High volume breakdown below 20-period low."))
 
-        # ==========================================
-        # STRATEGY 4: Supply & Demand
-        # ==========================================
+        # 5. Supply & Demand
         if prev['Body_Size'] > prev['Avg_Body'] * 1.5 and prev['Close'] > prev['Open']:
             if current_price >= prev['Open'] and current_price <= prev['Close'] * 1.002:
-                setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), 
-                    stopLoss=round(prev['Open'] - (atr * 1.0), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), 
-                    rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                    strategy_name="Supply & Demand", strategy_logic="Retest of strong bullish demand zone."))
+                setups.append(Setup(timeframe=tf.upper(), direction="BUY", entry=round(current_price, decimals), stopLoss=round(prev['Open'] - (atr * 1.0), decimals), takeProfit=round(current_price + (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="Supply & Demand", strategy_logic="Retest of strong bullish demand zone."))
         elif prev['Body_Size'] > prev['Avg_Body'] * 1.5 and prev['Close'] < prev['Open']:
             if current_price <= prev['Open'] and current_price >= prev['Close'] * 0.998:
-                setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), 
-                    stopLoss=round(prev['Open'] + (atr * 1.0), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), 
-                    rsi=round(current_rsi, 1), current_price=round(current_price, decimals),
-                    strategy_name="Supply & Demand", strategy_logic="Retest of strong bearish supply zone."))
+                setups.append(Setup(timeframe=tf.upper(), direction="SELL", entry=round(current_price, decimals), stopLoss=round(prev['Open'] + (atr * 1.0), decimals), takeProfit=round(current_price - (atr * tp_mult), decimals), rsi=round(current_rsi, 1), current_price=round(current_price, decimals), strategy_name="Supply & Demand", strategy_logic="Retest of strong bearish supply zone."))
 
         return setups
-    except Exception as e:
-        print(f"Error {pair} {tf}: {e}")
-        return []
+    except: return []
 
 @app.get("/signals")
 def get_signals():
-    final_signals = []
+    raw_signals = {}
+    
+    # 1. Gather all raw setups
     for pair, symbol in MARKETS.items():
         all_setups = []
         for tf in TIMEFRAMES:
             setups = get_setups(pair, symbol, tf)
             all_setups.extend(setups)
-            time.sleep(0.1) # Prevent rate limits
+            time.sleep(0.15) # Prevent rate limits
         if all_setups:
-            final_signals.append(Signal(pair=pair, setups=all_setups))
+            raw_signals[pair] = all_setups
+
+    # 2. CONFLICT RESOLUTION ENGINE (The "No Contradiction" Logic)
+    final_signals = []
+    for pair, setups in raw_signals.items():
+        buy_count = sum(1 for s in setups if s.direction == "BUY")
+        sell_count = sum(1 for s in setups if s.direction == "SELL")
+        
+        # If BUYs outnumber SELLs, the market bias is BUY. Throw away all SELLs.
+        if buy_count > sell_count:
+            filtered = [s for s in setups if s.direction == "BUY"]
+            final_signals.append(Signal(pair=pair, setups=filtered))
+            
+        # If SELLs outnumber BUYs, the market bias is SELL. Throw away all BUYs.
+        elif sell_count > buy_count:
+            filtered = [s for s in setups if s.direction == "SELL"]
+            final_signals.append(Signal(pair=pair, setups=filtered))
+            
+        # If it's a tie (e.g., 2 BUYs, 2 SELLs), the market is choppy. We discard the pair entirely.
+
     return final_signals
 
 if __name__ == "__main__":
