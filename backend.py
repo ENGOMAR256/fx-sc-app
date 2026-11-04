@@ -4,7 +4,6 @@ from pydantic import BaseModel
 from typing import List
 import yfinance as yf
 import pandas as pd
-import os
 import time
 
 app = FastAPI()
@@ -25,6 +24,7 @@ class Setup(BaseModel):
     stopLoss: float
     takeProfit: float
     current_price: float
+    status: str # "PENDING" or "LIVE"
     strategy_name: str
     strategy_logic: str
 
@@ -43,7 +43,7 @@ def analyze_pair(pair, symbol):
     try:
         setups = []
         
-        # 1. GET H4 DATA (The Master Trend Filter)
+        # 1. MASTER TREND (H4) - Fast fetch
         h4_df = yf.Ticker(symbol).history(period="3mo", interval="4h")
         if h4_df.empty or len(h4_df) < 50: return None
         
@@ -51,82 +51,96 @@ def analyze_pair(pair, symbol):
         h4_df['EMA_200'] = h4_df['Close'].ewm(span=200, adjust=False).mean()
         last_h4 = h4_df.iloc[-2]
         
-        if last_h4['EMA_50'] > last_h4['EMA_200']:
-            master_trend = "UP"
-        elif last_h4['EMA_50'] < last_h4['EMA_200']:
-            master_trend = "DOWN"
-        else:
-            return None # Market is ranging
+        if last_h4['EMA_50'] > last_h4['EMA_200']: master_trend = "UP"
+        elif last_h4['EMA_50'] < last_h4['EMA_200']: master_trend = "DOWN"
+        else: return None
 
-        # 2. SCAN TIMEFRAMES (M15, M30, H1, H4)
+        # 2. SCAN TIMEFRAMES
         timeframes_config = [
-            {"tf": "15m", "period": "5d",  "type": "Scalping",   "sl_mult": 1.0,  "tp_mult": 2.0},  # 1:2 RR
-            {"tf": "30m", "period": "10d", "type": "Day Trading","sl_mult": 1.2,  "tp_mult": 3.6},  # 1:3 RR (The M30 Bridge)
-            {"tf": "1h",  "period": "1mo", "type": "Intraday",   "sl_mult": 1.5,  "tp_mult": 3.75}, # 1:2.5 RR
-            {"tf": "4h",  "period": "3mo", "type": "Swing",      "sl_mult": 2.0,  "tp_mult": 6.0}   # 1:3 RR
+            {"tf": "15m", "period": "5d",  "type": "Scalping",    "sl_mult": 1.0,  "tp_mult": 3.0},
+            {"tf": "30m", "period": "10d", "type": "Day Trading", "sl_mult": 1.2,  "tp_mult": 3.6},
+            {"tf": "1h",  "period": "1mo", "type": "Intraday",    "sl_mult": 1.5,  "tp_mult": 4.5},
+            {"tf": "4h",  "period": "3mo", "type": "Swing",       "sl_mult": 2.0,  "tp_mult": 6.0}
         ]
 
         for config in timeframes_config:
             tf = config["tf"]
             df = yf.Ticker(symbol).history(period=config["period"], interval=tf)
-            
             if df.empty or len(df) < 30: continue
             
             df['ATR'] = get_atr(df)
             df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
             
-            last = df.iloc[-2] 
-            current_price = df.iloc[-1]['Close'] 
+            last = df.iloc[-2]      # Last CLOSED candle (for pattern confirmation)
+            live = df.iloc[-1]      # CURRENT FORMING candle (for live price)
+            
+            current_price = live['Close']
             atr = last['ATR']
             decimals = 5 if current_price < 10 else 2
             
             sl_dist = atr * config["sl_mult"]
             tp_dist = atr * config["tp_mult"]
             
-            prev_high = df['High'].iloc[-5:-1].max()
-            prev_low = df['Low'].iloc[-5:-1].min()
+            # The "Entry Zone" is the 20 EMA of the last closed candle
+            entry_zone = last['EMA_20']
             
-            # BUY LOGIC
+            # BUY LOGIC (Only if H4 is UP)
             if master_trend == "UP":
+                # Did the closed candle break structure and pull back?
+                prev_high = df['High'].iloc[-6:-2].max()
                 broke_structure = last['High'] > prev_high
-                pulled_back = last['Low'] <= last['EMA_20'] * 1.002
-                rejected = last['Close'] > last['EMA_20']
+                touched_zone = last['Low'] <= entry_zone * 1.002
                 
-                if broke_structure and pulled_back and rejected:
-                    entry = round(last['Close'], decimals)
-                    if abs(current_price - entry) <= sl_dist:
-                        setups.append(Setup(
-                            timeframe=tf.upper(), direction="BUY", entry=entry,
-                            stopLoss=round(entry - sl_dist, decimals),
-                            takeProfit=round(entry + tp_dist, decimals),
-                            current_price=round(current_price, decimals),
-                            strategy_name=f"{config['type']}: BOS Pullback",
-                            strategy_logic=f"H4 Trend UP. {tf.upper()} broke structure & pulled back to EMA 20."
-                        ))
+                if broke_structure and touched_zone:
+                    # PENDING vs LIVE Logic
+                    # If live price is still above the zone, it's PENDING (approaching)
+                    # If live price is at or below the zone, it's LIVE (reacting)
+                    if current_price > entry_zone * 1.002:
+                        status = "PENDING"
+                        entry = round(entry_zone, decimals)
+                    else:
+                        status = "LIVE"
+                        entry = round(last['Close'], decimals)
+                        
+                    setups.append(Setup(
+                        timeframe=tf.upper(), direction="BUY", entry=entry,
+                        stopLoss=round(entry - sl_dist, decimals),
+                        takeProfit=round(entry + tp_dist, decimals),
+                        current_price=round(current_price, decimals),
+                        status=status,
+                        strategy_name=f"{config['type']}: BOS Pullback",
+                        strategy_logic=f"H4 UP. {tf.upper()} broke structure. Waiting for bounce at 20 EMA."
+                    ))
 
-            # SELL LOGIC
+            # SELL LOGIC (Only if H4 is DOWN)
             elif master_trend == "DOWN":
+                prev_low = df['Low'].iloc[-6:-2].min()
                 broke_structure = last['Low'] < prev_low
-                pulled_back = last['High'] >= last['EMA_20'] * 0.998
-                rejected = last['Close'] < last['EMA_20']
+                touched_zone = last['High'] >= entry_zone * 0.998
                 
-                if broke_structure and pulled_back and rejected:
-                    entry = round(last['Close'], decimals)
-                    if abs(current_price - entry) <= sl_dist:
-                        setups.append(Setup(
-                            timeframe=tf.upper(), direction="SELL", entry=entry,
-                            stopLoss=round(entry + sl_dist, decimals),
-                            takeProfit=round(entry - tp_dist, decimals),
-                            current_price=round(current_price, decimals),
-                            strategy_name=f"{config['type']}: BOS Pullback",
-                            strategy_logic=f"H4 Trend DOWN. {tf.upper()} broke structure & pulled back to EMA 20."
-                        ))
+                if broke_structure and touched_zone:
+                    if current_price < entry_zone * 0.998:
+                        status = "PENDING"
+                        entry = round(entry_zone, decimals)
+                    else:
+                        status = "LIVE"
+                        entry = round(last['Close'], decimals)
+                        
+                    setups.append(Setup(
+                        timeframe=tf.upper(), direction="SELL", entry=entry,
+                        stopLoss=round(entry + sl_dist, decimals),
+                        takeProfit=round(entry - tp_dist, decimals),
+                        current_price=round(current_price, decimals),
+                        status=status,
+                        strategy_name=f"{config['type']}: BOS Pullback",
+                        strategy_logic=f"H4 DOWN. {tf.upper()} broke structure. Waiting for rejection at 20 EMA."
+                    ))
 
         if setups:
             return Signal(pair=pair, setups=setups)
         return None
 
-    except Exception as e:
+    except Exception:
         return None
 
 @app.get("/signals")
@@ -136,7 +150,7 @@ def get_signals():
         signal = analyze_pair(pair, symbol)
         if signal:
             final_signals.append(signal)
-        time.sleep(0.2) 
+        time.sleep(0.1) # Optimized speed
     return final_signals
 
 if __name__ == "__main__":
