@@ -44,6 +44,7 @@
         .setup-block { background: var(--bg-dark); border: 1px solid var(--border); border-radius: 10px; padding: 16px; margin-bottom: 12px; position: relative; overflow: hidden; transition: all 0.3s; }
         .setup-block:last-child { margin-bottom: 0; }
         .setup-block.is-live-setup { border-color: var(--green); background: rgba(0, 230, 118, 0.05); box-shadow: 0 0 15px rgba(0, 230, 118, 0.1); }
+        .setup-block.is-pending-setup { border-color: var(--blue); background: rgba(41, 121, 255, 0.05); }
         
         .setup-top { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .tf-badge { background: var(--bg-card); color: var(--text-muted); padding: 4px 8px; border-radius: 4px; font-size: 11px; font-weight: 800; }
@@ -53,6 +54,7 @@
         
         .status-label { font-size: 11px; font-weight: 900; letter-spacing: 0.5px; display: flex; align-items: center; gap: 6px; }
         .status-label.live { color: var(--green); }
+        .status-label.pending { color: var(--blue); }
 
         .strategy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;}
         .strategy-name { font-size: 13px; color: var(--text-main); font-weight: 700; }
@@ -115,6 +117,7 @@
             <div class="filters">
                 <button class="filter-btn active" onclick="filterSignals('all', this)">ALL</button>
                 <button class="filter-btn" onclick="filterSignals('live', this)">LIVE</button>
+                <button class="filter-btn" onclick="filterSignals('pending', this)">PENDING</button>
             </div>
             <div class="signals-grid" id="signalGrid">
                 <div class="empty-state"><div class="empty-icon">⏳</div><div>Scanning markets...</div></div>
@@ -154,7 +157,7 @@
         async function fetchSignals() {
             try {
                 // ⚠️ REPLACE WITH YOUR ACTUAL RENDER URL ⚠️
-                const res = await fetch('https://fx-sc-app.onrender.com/signals');
+                const res = await fetch('https://YOUR-RENDER-URL.onrender.com/signals');
                 const signals = await res.json();
                 window.lastSignals = signals;
                 renderSignals(signals);
@@ -175,8 +178,12 @@
 
             signals.forEach(s => {
                 let filteredSetups = s.setups;
+                
+                // FILTER LOGIC
                 if (currentFilter === 'live') {
                     filteredSetups = s.setups.filter(setup => setup.status === 'LIVE');
+                } else if (currentFilter === 'pending') {
+                    filteredSetups = s.setups.filter(setup => setup.status === 'PENDING');
                 }
                 
                 if (filteredSetups.length === 0) return;
@@ -190,7 +197,13 @@
                 filteredSetups.forEach(setup => {
                     const isBuy = setup.direction === 'BUY';
                     const uniqueId = `s-${globalIdx}`;
-                    const blockClass = 'setup-block is-live-setup';
+                    
+                    // DYNAMIC STYLING BASED ON STATUS
+                    const isLive = setup.status === 'LIVE';
+                    const blockClass = isLive ? 'setup-block is-live-setup' : 'setup-block is-pending-setup';
+                    const statusClass = isLive ? 'live' : 'pending';
+                    const statusText = isLive ? 'LIVE' : 'PENDING';
+                    
                     const signalTime = setup.signal_time || 'Just now';
                     const confidence = setup.confidence || 0;
                     const factors = setup.confluence_factors ? setup.confluence_factors.join(' • ') : 'Analyzing...';
@@ -201,9 +214,9 @@
                                 <span class="tf-badge">${setup.timeframe}</span>
                                 <span class="dir-badge ${isBuy ? 'buy' : 'sell'}">${setup.direction}</span>
                             </div>
-                            <span class="status-label live">
+                            <span class="status-label ${statusClass}">
                                 <span style="width:6px; height:6px; border-radius:50%; background:currentColor;"></span>
-                                LIVE
+                                ${statusText}
                             </span>
                         </div>
                         <div class="strategy-header">
