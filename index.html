@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+<!DOCTYPE html
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -177,7 +177,7 @@
         async function fetchSignals() {
             try {
                 // ⚠️ YOU MUST REPLACE THIS WITH YOUR ACTUAL RENDER URL ⚠️
-                const res = await fetch('https://YOUR-RENDER-URL.onrender.com/signals');
+                const res = await fetch('https://fx-sc-app.onrender.com/signals');
                 const signals = await res.json();
                 window.lastSignals = signals;
                 renderSignals(signals);
