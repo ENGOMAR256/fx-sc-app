@@ -32,9 +32,6 @@ class Signal(BaseModel):
     pair: str
     setups: List[Setup]
 
-def get_ema(df, span):
-    return df['Close'].ewm(span=span, adjust=False).mean()
-
 def get_atr(df, period=14):
     high_low = df['High'] - df['Low']
     high_close = (df['High'] - df['Close'].shift()).abs()
@@ -42,80 +39,88 @@ def get_atr(df, period=14):
     tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
     return tr.rolling(period).mean()
 
-def get_top_down_signal(pair, symbol):
+def analyze_pair(pair, symbol):
     try:
-        # 1. GET 4-HOUR DATA (The Trend Filter)
-        h4_df = yf.Ticker(symbol).history(period="6mo", interval="4h")
-        if h4_df.empty or len(h4_df) < 200: return None
-        
-        h4_df['EMA_50'] = get_ema(h4_df, 50)
-        h4_df['EMA_200'] = get_ema(h4_df, 200)
-        
-        # Use the last CLOSED 4H candle to determine trend
-        last_h4 = h4_df.iloc[-2] 
-        h4_trend = "UP" if last_h4['EMA_50'] > last_h4['EMA_200'] else "DOWN"
-
-        # 2. GET 1-HOUR DATA (The Entry Trigger)
-        h1_df = yf.Ticker(symbol).history(period="1mo", interval="1h")
-        if h1_df.empty or len(h1_df) < 50: return None
-        
-        h1_df['EMA_20'] = get_ema(h1_df, 20)
-        h1_df['ATR'] = get_atr(h1_df)
-        
-        # Use the last CLOSED 1H candle for the trigger
-        last_h1 = h1_df.iloc[-2]
-        current_price = h1_df.iloc[-1]['Close'] # Live price
-        atr = last_h1['ATR']
-        decimals = 5 if current_price < 10 else 2
-        
         setups = []
         
-        # Risk Management: 1:3 RR
-        sl_distance = atr * 0.5
-        tp_distance = atr * 1.5 # 3x the risk
+        # 1. GET H4 DATA (The Master Trend Filter)
+        h4_df = yf.Ticker(symbol).history(period="3mo", interval="4h")
+        if h4_df.empty or len(h4_df) < 50: return None
+        
+        h4_df['EMA_50'] = h4_df['Close'].ewm(span=50, adjust=False).mean()
+        h4_df['EMA_200'] = h4_df['Close'].ewm(span=200, adjust=False).mean()
+        last_h4 = h4_df.iloc[-2]
+        
+        if last_h4['EMA_50'] > last_h4['EMA_200']:
+            master_trend = "UP"
+        elif last_h4['EMA_50'] < last_h4['EMA_200']:
+            master_trend = "DOWN"
+        else:
+            return None # Market is ranging
 
-        # ==========================================
-        # BUY LOGIC (Only if 4H Trend is UP)
-        # ==========================================
-        if h4_trend == "UP":
-            # Check if the closed 1H candle pulled back to the 20 EMA and rejected it
-            # (Low touched or went below EMA20, but Closed ABOVE EMA20)
-            ema20_val = last_h1['EMA_20']
-            pulled_back = last_h1['Low'] <= ema20_val * 1.002
-            rejected = last_h1['Close'] > ema20_val
-            
-            if pulled_back and rejected:
-                entry = round(last_h1['Close'], decimals)
-                # Live Proximity: Only show if live price is near the entry
-                if abs(current_price - entry) <= sl_distance:
-                    setups.append(Setup(
-                        timeframe="H1 (4H Trend: UP)", direction="BUY", entry=entry,
-                        stopLoss=round(entry - sl_distance, decimals),
-                        takeProfit=round(entry + tp_distance, decimals),
-                        current_price=round(current_price, decimals),
-                        strategy_name="Top-Down Pullback",
-                        strategy_logic=f"4H is Bullish. 1H pulled back to 20 EMA ({round(ema20_val, decimals)}) and rejected. Buyers defending trend."
-                    ))
+        # 2. SCAN TIMEFRAMES (M15, M30, H1, H4)
+        timeframes_config = [
+            {"tf": "15m", "period": "5d",  "type": "Scalping",   "sl_mult": 1.0,  "tp_mult": 2.0},  # 1:2 RR
+            {"tf": "30m", "period": "10d", "type": "Day Trading","sl_mult": 1.2,  "tp_mult": 3.6},  # 1:3 RR (The M30 Bridge)
+            {"tf": "1h",  "period": "1mo", "type": "Intraday",   "sl_mult": 1.5,  "tp_mult": 3.75}, # 1:2.5 RR
+            {"tf": "4h",  "period": "3mo", "type": "Swing",      "sl_mult": 2.0,  "tp_mult": 6.0}   # 1:3 RR
+        ]
 
-        # ==========================================
-        # SELL LOGIC (Only if 4H Trend is DOWN)
-        # ==========================================
-        elif h4_trend == "DOWN":
-            ema20_val = last_h1['EMA_20']
-            pulled_back = last_h1['High'] >= ema20_val * 0.998
-            rejected = last_h1['Close'] < ema20_val
+        for config in timeframes_config:
+            tf = config["tf"]
+            df = yf.Ticker(symbol).history(period=config["period"], interval=tf)
             
-            if pulled_back and rejected:
-                entry = round(last_h1['Close'], decimals)
-                if abs(current_price - entry) <= sl_distance:
-                    setups.append(Setup(
-                        timeframe="H1 (4H Trend: DOWN)", direction="SELL", entry=entry,
-                        stopLoss=round(entry + sl_distance, decimals),
-                        takeProfit=round(entry - tp_distance, decimals),
-                        current_price=round(current_price, decimals),
-                        strategy_name="Top-Down Pullback",
-                        strategy_logic=f"4H is Bearish. 1H pulled back to 20 EMA ({round(ema20_val, decimals)}) and rejected. Sellers defending trend."
-                    ))
+            if df.empty or len(df) < 30: continue
+            
+            df['ATR'] = get_atr(df)
+            df['EMA_20'] = df['Close'].ewm(span=20, adjust=False).mean()
+            
+            last = df.iloc[-2] 
+            current_price = df.iloc[-1]['Close'] 
+            atr = last['ATR']
+            decimals = 5 if current_price < 10 else 2
+            
+            sl_dist = atr * config["sl_mult"]
+            tp_dist = atr * config["tp_mult"]
+            
+            prev_high = df['High'].iloc[-5:-1].max()
+            prev_low = df['Low'].iloc[-5:-1].min()
+            
+            # BUY LOGIC
+            if master_trend == "UP":
+                broke_structure = last['High'] > prev_high
+                pulled_back = last['Low'] <= last['EMA_20'] * 1.002
+                rejected = last['Close'] > last['EMA_20']
+                
+                if broke_structure and pulled_back and rejected:
+                    entry = round(last['Close'], decimals)
+                    if abs(current_price - entry) <= sl_dist:
+                        setups.append(Setup(
+                            timeframe=tf.upper(), direction="BUY", entry=entry,
+                            stopLoss=round(entry - sl_dist, decimals),
+                            takeProfit=round(entry + tp_dist, decimals),
+                            current_price=round(current_price, decimals),
+                            strategy_name=f"{config['type']}: BOS Pullback",
+                            strategy_logic=f"H4 Trend UP. {tf.upper()} broke structure & pulled back to EMA 20."
+                        ))
+
+            # SELL LOGIC
+            elif master_trend == "DOWN":
+                broke_structure = last['Low'] < prev_low
+                pulled_back = last['High'] >= last['EMA_20'] * 0.998
+                rejected = last['Close'] < last['EMA_20']
+                
+                if broke_structure and pulled_back and rejected:
+                    entry = round(last['Close'], decimals)
+                    if abs(current_price - entry) <= sl_dist:
+                        setups.append(Setup(
+                            timeframe=tf.upper(), direction="SELL", entry=entry,
+                            stopLoss=round(entry + sl_dist, decimals),
+                            takeProfit=round(entry - tp_dist, decimals),
+                            current_price=round(current_price, decimals),
+                            strategy_name=f"{config['type']}: BOS Pullback",
+                            strategy_logic=f"H4 Trend DOWN. {tf.upper()} broke structure & pulled back to EMA 20."
+                        ))
 
         if setups:
             return Signal(pair=pair, setups=setups)
@@ -128,10 +133,10 @@ def get_top_down_signal(pair, symbol):
 def get_signals():
     final_signals = []
     for pair, symbol in MARKETS.items():
-        signal = get_top_down_signal(pair, symbol)
+        signal = analyze_pair(pair, symbol)
         if signal:
             final_signals.append(signal)
-        time.sleep(0.5) # Prevent rate limits
+        time.sleep(0.2) 
     return final_signals
 
 if __name__ == "__main__":
