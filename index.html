@@ -1,4 +1,4 @@
-<!DOCTYPE html
+<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
@@ -57,10 +57,14 @@
         .status-label.live { color: var(--green); }
         .status-label.pending { color: var(--blue); }
 
-        .strategy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
+        .strategy-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;}
         .strategy-name { font-size: 13px; color: var(--text-main); font-weight: 700; }
-        .time-badge { font-size: 10px; color: var(--gold); font-weight: 700; background: var(--bg-card); padding: 4px 8px; border-radius: 4px; border: 1px solid rgba(212, 168, 67, 0.3); }
+        .badges-wrap { display: flex; gap: 8px; }
+        .badge { font-size: 10px; font-weight: 700; padding: 4px 8px; border-radius: 4px; }
+        .time-badge { color: var(--gold); background: var(--bg-card); border: 1px solid rgba(212, 168, 67, 0.3); }
+        .conf-badge { color: var(--green); background: rgba(0, 230, 118, 0.1); border: 1px solid rgba(0, 230, 118, 0.3); }
         
+        .confluence-list { font-size: 10px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5; padding: 8px; background: var(--bg-card); border-radius: 6px; border-left: 2px solid var(--gold); }
         .strategy-text { font-size: 12px; color: var(--text-muted); margin-bottom: 16px; font-style: italic; line-height: 1.4; }
 
         .price-row { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 16px; }
@@ -177,7 +181,7 @@
         async function fetchSignals() {
             try {
                 // ⚠️ YOU MUST REPLACE THIS WITH YOUR ACTUAL RENDER URL ⚠️
-                const res = await fetch('https://fx-sc-app.onrender.com/signals');
+                const res = await fetch('https://YOUR-RENDER-URL.onrender.com/signals');
                 const signals = await res.json();
                 window.lastSignals = signals;
                 renderSignals(signals);
@@ -201,15 +205,9 @@
                 let filteredSetups = s.setups;
                 
                 if (currentFilter === 'live') {
-                    filteredSetups = s.setups.filter(setup => {
-                        const isBuy = setup.direction === 'BUY';
-                        return (isBuy && setup.current_price >= setup.entry) || (!isBuy && setup.current_price <= setup.entry);
-                    });
+                    filteredSetups = s.setups.filter(setup => setup.status === 'LIVE' || (setup.direction === 'BUY' && setup.current_price >= setup.entry) || (setup.direction === 'SELL' && setup.current_price <= setup.entry));
                 } else if (currentFilter === 'pending') {
-                    filteredSetups = s.setups.filter(setup => {
-                        const isBuy = setup.direction === 'BUY';
-                        return (isBuy && setup.current_price < setup.entry) || (!isBuy && setup.current_price > setup.entry);
-                    });
+                    filteredSetups = s.setups.filter(setup => setup.status === 'PENDING' || (setup.direction === 'BUY' && setup.current_price < setup.entry) || (setup.direction === 'SELL' && setup.current_price > setup.entry));
                 }
                 
                 if (filteredSetups.length === 0) return;
@@ -225,7 +223,7 @@
                     const uniqueId = `s-${globalIdx}`;
                     
                     // PENDING TO LIVE LOGIC
-                    let isLive = false;
+                    let isLive = setup.status === 'LIVE';
                     if ((isBuy && setup.current_price >= setup.entry) || (!isBuy && setup.current_price <= setup.entry)) {
                         isLive = true;
                     }
@@ -234,8 +232,9 @@
                     const statusText = isLive ? 'LIVE' : 'PENDING';
                     const blockClass = isLive ? 'setup-block is-live-setup' : 'setup-block';
                     
-                    // Get the timestamp from the backend
                     const signalTime = setup.signal_time || 'Just now';
+                    const confidence = setup.confidence || 0;
+                    const factors = setup.confluence_factors ? setup.confluence_factors.join(' • ') : 'Analyzing...';
 
                     html += `<div class="${blockClass}" id="block-${uniqueId}">
                         <div class="setup-top">
@@ -251,8 +250,13 @@
                         
                         <div class="strategy-header">
                             <div class="strategy-name">${setup.strategy_name}</div>
-                            <div class="time-badge">🕒 ${signalTime}</div>
+                            <div class="badges-wrap">
+                                <div class="badge time-badge">🕒 ${signalTime}</div>
+                                <div class="badge conf-badge">✓ ${confidence}%</div>
+                            </div>
                         </div>
+                        
+                        <div class="confluence-list">${factors}</div>
                         <div class="strategy-text">${setup.strategy_logic}</div>
                         
                         <div class="price-row">
